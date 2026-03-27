@@ -90,7 +90,8 @@ export default function InventoryManager() {
 
   // ─── Local UI state ────────────────────────────────────────────────────────
   const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(""); // only set on SEARCH click/Enter
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchSuffixMode, setSearchSuffixMode] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [dismissedAnnouncement, setDismissedAnnouncement] = useState(false);
@@ -144,12 +145,27 @@ export default function InventoryManager() {
     }
   }, [inv?.announcement, inv?.showAnnouncement]);
 
-  // ─── Debounced search (150ms) ──────────────────────────────────────────────
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      startTransition(() => setSearchQuery(searchInput));
-    }, 150);
-    return () => clearTimeout(timer);
+  // ─── Suggestions (instant, just part numbers, no rendering lag) ───────────
+  const suggestions = useMemo(() => {
+    const q = searchInput.toLowerCase().trim();
+    if (!q || parts.length === 0) return [];
+    const matches: string[] = [];
+    for (const part of parts) {
+      const pn = (part.partNumber || "").toLowerCase();
+      if (searchSuffixMode) {
+        if (pn.endsWith(q)) matches.push(part.partNumber);
+      } else {
+        if (pn.includes(q)) matches.push(part.partNumber);
+      }
+      if (matches.length >= 8) break;
+    }
+    return matches;
+  }, [searchInput, parts, searchSuffixMode]);
+
+  const doSearch = useCallback(() => {
+    if (!searchInput.trim()) return;
+    setShowSuggestions(false);
+    startTransition(() => setSearchQuery(searchInput.trim()));
   }, [searchInput]);
 
   // ─── Mutations ─────────────────────────────────────────────────────────────
@@ -194,9 +210,9 @@ export default function InventoryManager() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
   });
 
-  // ─── Filtered parts ────────────────────────────────────────────────────────
+  // ─── Filtered parts (only computed after SEARCH click) ────────────────────
   const filteredParts = useMemo(() => {
-    if (!searchQuery.trim()) return parts;
+    if (!searchQuery.trim()) return [];
     const query = searchQuery.toLowerCase().trim();
     return parts.filter(part => {
       const partNum = (part.partNumber || "").toLowerCase().trim();
@@ -592,29 +608,51 @@ export default function InventoryManager() {
               
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-400" />
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-400 pointer-events-none z-10" />
                   <Input 
                     placeholder={searchSuffixMode ? "Enter last 3 or 4 digits..." : "Enter Part Number..."}
                     className="pl-11 h-12 text-base border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 focus:ring-2 focus:ring-primary/20 dark:focus:ring-primary/30 transition-all"
                     value={searchInput}
-                    onChange={(e) => setSearchInput(e.target.value)}
+                    onChange={(e) => { setSearchInput(e.target.value); setShowSuggestions(true); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") doSearch(); if (e.key === "Escape") setShowSuggestions(false); }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                     data-testid="input-search"
                     autoFocus
                   />
                   {searchInput && (
                     <button 
-                      onClick={() => { setSearchInput(""); setSearchQuery(""); }}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+                      onClick={() => { setSearchInput(""); setSearchQuery(""); setShowSuggestions(false); }}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors z-10"
                       data-testid="btn-clear-search"
                     >
                       <X className="w-4 h-4" />
                     </button>
                   )}
+                  {/* Suggestions dropdown */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl shadow-lg z-50 overflow-hidden">
+                      {suggestions.map((s) => (
+                        <button
+                          key={s}
+                          onMouseDown={() => {
+                            setSearchInput(s);
+                            setShowSuggestions(false);
+                            startTransition(() => setSearchQuery(s));
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-sm font-mono font-medium text-neutral-800 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-700 flex items-center gap-2 transition-colors"
+                        >
+                          <Search className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 
                 <Button 
                   className="h-12 px-8 font-semibold tracking-wide text-sm bg-primary hover:bg-primary/90 transition-all" 
-                  onClick={() => setSearchQuery(searchInput)}
+                  onClick={doSearch}
                   data-testid="btn-search"
                 >
                   SEARCH
@@ -673,40 +711,38 @@ export default function InventoryManager() {
                 </Button>
               </div>
             </div>
-          ) : parts.length === 0 && !isLoading ? (
+          ) : (
             <div className="flex flex-col items-center justify-center p-16 border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-2xl bg-neutral-50/50 dark:bg-neutral-900/20 text-center gap-3">
               <div className="p-4 bg-neutral-100 dark:bg-neutral-800 rounded-full">
                 <Search className="w-8 h-8 text-neutral-400" />
               </div>
-              <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">No inventory yet</h3>
-              <p className="text-sm text-neutral-500 dark:text-neutral-400 max-w-xs">
-                {devMode ? "Upload a CSV file to get started. Data will be shared with all users automatically." : "No inventory has been uploaded yet. Please contact your admin."}
-              </p>
-              {devMode && (
-                <Button variant="outline" className="mt-2" onClick={() => fileInputRef.current?.click()}>
-                  <Upload className="w-4 h-4 mr-2" /> Upload CSV
-                </Button>
+              {isLoading ? (
+                <>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Loading inventory...</h3>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400">Fetching data from server</p>
+                </>
+              ) : parts.length === 0 ? (
+                <>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">No inventory yet</h3>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400 max-w-xs">
+                    {devMode ? "Upload a CSV file to get started." : "No inventory uploaded yet. Contact your admin."}
+                  </p>
+                  {devMode && (
+                    <Button variant="outline" className="mt-2" onClick={() => fileInputRef.current?.click()}>
+                      <Upload className="w-4 h-4 mr-2" /> Upload CSV
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">Ready to search</h3>
+                  <p className="text-sm text-neutral-500 dark:text-neutral-400 max-w-xs">
+                    {parts.length} parts loaded. Type a part number above — suggestions will appear. Press SEARCH to see results.
+                  </p>
+                </>
               )}
             </div>
-          ) : !searchQuery && parts.length > 0 ? (
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">
-                  All Parts
-                  <Badge variant="secondary" className="ml-2 text-xs">{parts.length}</Badge>
-                </h2>
-                <p className="text-xs text-neutral-400 mt-0.5">Showing all inventory • search above to filter</p>
-              </div>
-              <div className="flex items-center gap-1 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-1 hidden sm:flex">
-                <Button variant="ghost" size="icon" className={`h-7 w-7 rounded-md transition-colors ${isGridView ? 'bg-neutral-100 dark:bg-neutral-800' : ''}`} onClick={() => setIsGridView(true)}>
-                  <LayoutGrid className="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="icon" className={`h-7 w-7 rounded-md transition-colors ${!isGridView ? 'bg-neutral-100 dark:bg-neutral-800' : ''}`} onClick={() => setIsGridView(false)}>
-                  <List className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          ) : null}
+          )}
 
           {/* No results for search */}
           {searchQuery && filteredParts.length === 0 && (
@@ -1142,17 +1178,41 @@ export default function InventoryManager() {
               ) : (
                 <>
                   <div className="space-y-2">
-                    {reports.map((r) => (
-                      <div key={r.id} className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/20 rounded-xl border border-orange-100 dark:border-orange-800">
-                        <div>
-                          <p className="font-semibold text-sm font-mono text-orange-900 dark:text-orange-200">{r.partNumber}</p>
-                          <p className="text-xs text-orange-600 dark:text-orange-400">
-                            Reported {new Date(r.reportedAt).toLocaleString()}
-                          </p>
+                    {reports.map((r) => {
+                      const reportedPart = parts.find(p => p.id === r.partId || p.partNumber === r.partNumber);
+                      return (
+                        <div key={r.id} className="flex items-center justify-between p-3 bg-orange-50 dark:bg-orange-900/20 rounded-xl border border-orange-100 dark:border-orange-800">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-semibold text-sm font-mono text-orange-900 dark:text-orange-200">{r.partNumber}</p>
+                            <p className="text-xs text-orange-600 dark:text-orange-400">
+                              Reported {new Date(r.reportedAt).toLocaleString()}
+                            </p>
+                            {reportedPart?.location && (
+                              <p className="text-xs text-orange-500 dark:text-orange-500 mt-0.5">
+                                Current location: <span className="font-medium">{reportedPart.location}</span>
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            {reportedPart && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-900/40"
+                                onClick={() => {
+                                  setIsMasterDashboardOpen(false);
+                                  setTimeout(() => openEditModal(reportedPart), 200);
+                                }}
+                              >
+                                <Edit2 className="w-3.5 h-3.5 mr-1" />
+                                Edit Part
+                              </Button>
+                            )}
+                            <AlertCircle className="w-5 h-5 text-orange-500" />
+                          </div>
                         </div>
-                        <AlertCircle className="w-5 h-5 text-orange-500 shrink-0" />
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <Button 
                     variant="destructive" 
