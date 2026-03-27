@@ -22,14 +22,14 @@ import {
 
 // Define our base Part interface
 interface Part {
-  id: string;
+  id: string; // Unique identifier (could be part number if unique)
   partNumber: string;
   name: string;
   quantity: string | number;
   location: string;
   price: string | number;
-  images: string[];
-  [key: string]: any;
+  images: string[]; // Base64 encoded images or URLs
+  [key: string]: any; // Allow for dynamic CSV columns
 }
 
 interface LocationReport {
@@ -43,12 +43,14 @@ export default function InventoryManager() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // State
   const [parts, setParts] = useState<Part[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSuffixMode, setSearchSuffixMode] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [csvHeaders, setCsvHeaders] = useState<string[]>(["partNumber", "name", "quantity", "location", "price"]);
   
+  // Auth & Admin state
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
   const [adminPasswords, setAdminPasswords] = useState<string[]>(() => {
@@ -67,6 +69,7 @@ export default function InventoryManager() {
       if (saved) {
         try { 
           const parsed: LocationReport[] = JSON.parse(saved); 
+          // Auto-delete reports older than 7 days
           const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
           return parsed.filter(r => r.reportedAt > sevenDaysAgo);
         } catch (e) { return []; }
@@ -75,6 +78,7 @@ export default function InventoryManager() {
     return [];
   });
 
+  // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isImageGalleryOpen, setIsImageGalleryOpen] = useState(false);
@@ -82,9 +86,11 @@ export default function InventoryManager() {
   const [currentEditPart, setCurrentEditPart] = useState<Part | null>(null);
   const [activeImageGallery, setActiveImageGallery] = useState<{id: string, partId: string, images: string[]}>({id: '', partId: '', images: []});
   
+  // Form state
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [formImages, setFormImages] = useState<string[]>([]);
 
+  // Theme & Layout State
   const [isDarkMode, setIsDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
       return document.documentElement.classList.contains("dark");
@@ -101,21 +107,32 @@ export default function InventoryManager() {
     }
   }, [isDarkMode]);
 
+  // Master Dashboard State (Mockup)
   const [announcement, setAnnouncement] = useState("Welcome to the new Inventory System!");
   const [showAnnouncement, setShowAnnouncement] = useState(true);
   const [activeDashboardTab, setActiveDashboardTab] = useState("overview");
 
+  // Load from local storage on mount to persist across reloads
   useEffect(() => {
     const savedParts = localStorage.getItem("inventory_parts");
     const savedHeaders = localStorage.getItem("inventory_headers");
     if (savedParts) {
-      try { setParts(JSON.parse(savedParts)); } catch (e) {}
+      try {
+        setParts(JSON.parse(savedParts));
+      } catch (e) {
+        console.error("Failed to parse saved parts");
+      }
     }
     if (savedHeaders) {
-      try { setCsvHeaders(JSON.parse(savedHeaders)); } catch (e) {}
+      try {
+        setCsvHeaders(JSON.parse(savedHeaders));
+      } catch (e) {
+        console.error("Failed to parse saved headers");
+      }
     }
   }, []);
 
+  // Save to local storage whenever parts change
   useEffect(() => {
     if (parts.length > 0) {
       localStorage.setItem("inventory_parts", JSON.stringify(parts));
@@ -144,9 +161,16 @@ export default function InventoryManager() {
       setDevMode(true);
       setShowPasswordPrompt(false);
       setPasswordInput("");
-      toast({ title: "Developer Mode Enabled", description: "You now have admin access." });
+      toast({
+        title: "Developer Mode Enabled",
+        description: "You now have admin access.",
+      });
     } else {
-      toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
+      toast({
+        title: "Access Denied",
+        description: "Incorrect password.",
+        variant: "destructive",
+      });
       setPasswordInput("");
     }
   };
@@ -160,47 +184,67 @@ export default function InventoryManager() {
       skipEmptyLines: true,
       complete: (results) => {
         if (results.data && results.data.length > 0) {
+          // Extract headers
           const headers = Object.keys(results.data[0] as object);
           const cleanHeaders = headers.filter(h => h !== 'id' && h !== 'images');
           setCsvHeaders(cleanHeaders);
           
+          // Map data, ensuring we have a unique ID and a partNumber field
           const parsedParts = results.data.map((row: any, index) => {
+            // Try to find the part number column (case insensitive)
             const partNumKey = cleanHeaders.find(h => 
               h.toLowerCase() === 'partnumber' || 
               h.toLowerCase() === 'part_number' || 
               h.toLowerCase() === 'part no' || 
               h.toLowerCase() === 'partno'
-            ) || cleanHeaders[0];
+            ) || cleanHeaders[0]; // fallback to first column
 
             return {
               ...row,
               id: crypto.randomUUID(),
               partNumber: row[partNumKey] || `UNKNOWN-${index}`,
-              images: row.images ? (() => { try { return JSON.parse(row.images); } catch { return []; } })() : []
+              images: row.images ? JSON.parse(row.images) : []
             };
           });
 
           setParts(parsedParts);
-          toast({ title: "CSV Uploaded", description: `Successfully loaded ${parsedParts.length} parts.` });
+          toast({
+            title: "CSV Uploaded",
+            description: `Successfully loaded ${parsedParts.length} parts.`,
+          });
         }
       },
       error: (error) => {
-        toast({ title: "Error reading CSV", description: error.message, variant: "destructive" });
+        toast({
+          title: "Error reading CSV",
+          description: error.message,
+          variant: "destructive",
+        });
       }
     });
     
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const exportToCSV = () => {
     if (parts.length === 0) {
-      toast({ title: "No data to export", description: "Please add some parts first.", variant: "destructive" });
+      toast({
+        title: "No data to export",
+        description: "Please add some parts first.",
+        variant: "destructive",
+      });
       return;
     }
+
+    // Remove internal 'id' field for export and stringify images
     const exportData = parts.map(({ id, ...rest }) => ({
       ...rest,
       images: JSON.stringify(rest.images || [])
     }));
+    
     const csv = Papa.unparse(exportData);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -210,22 +254,49 @@ export default function InventoryManager() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast({ title: "Export Successful", description: "Inventory data has been downloaded as inventory_data.csv" });
+    
+    toast({
+      title: "Export Successful",
+      description: "Inventory data has been downloaded as data.csv",
+    });
   };
 
   const exportCompleteProject = async () => {
     if (parts.length === 0) {
-      toast({ title: "No data to export", description: "Please add some parts first.", variant: "destructive" });
+      toast({
+        title: "No data to export",
+        description: "Please add some parts first.",
+        variant: "destructive",
+      });
       return;
     }
 
-    toast({ title: "Generating Full Archive", description: "Packaging your data and images..." });
+    toast({
+      title: "Generating Full Archive",
+      description: "Packaging your app source code, data, and images...",
+    });
 
     try {
-      const zip = new JSZip();
-      const backupFolder = zip.folder("inventory_backup_data");
-      if (!backupFolder) throw new Error("Failed to create backup folder");
+      let zip: JSZip;
+      
+      // Try to fetch the base source code zip
+      try {
+        const response = await fetch("/source-code.zip");
+        if (response.ok) {
+           const blob = await response.blob();
+           zip = await JSZip.loadAsync(blob);
+        } else {
+           zip = new JSZip();
+        }
+      } catch (e) {
+        zip = new JSZip();
+      }
 
+      // Create a specific folder for the backup data within the project
+      const backupFolder = zip.folder("inventory_backup_data");
+      if (!backupFolder) throw new Error("Failed to create backup folder inside ZIP");
+
+      // 1. Add the CSV data
       const exportData = parts.map(({ id, ...rest }) => ({
         ...rest,
         hasImages: (rest.images && rest.images.length > 0) ? rest.images.length : 0,
@@ -235,9 +306,11 @@ export default function InventoryManager() {
       const csv = Papa.unparse(exportData);
       backupFolder.file("data.csv", csv);
 
+      // 2. Create an images folder and add images
       const imagesFolder = backupFolder.folder("images");
       if (imagesFolder) {
         const imageMapping: Record<string, string[]> = {};
+
         parts.forEach(part => {
           if (part.images && part.images.length > 0) {
             const partImages: string[] = [];
@@ -247,35 +320,51 @@ export default function InventoryManager() {
                 let ext = 'jpg';
                 if (matches[1] === 'image/png') ext = 'png';
                 else if (matches[1] === 'image/webp') ext = 'webp';
+                else if (matches[1] === 'image/jpeg') ext = 'jpg';
+
                 const filename = `${part.partNumber.replace(/[^a-zA-Z0-9]/g, '_')}_${index + 1}.${ext}`;
-                imagesFolder.file(filename, matches[2], {base64: true});
+                const base64Content = matches[2];
+                
+                imagesFolder.file(filename, base64Content, {base64: true});
                 partImages.push(`images/${filename}`);
               }
             });
             imageMapping[part.partNumber] = partImages;
           }
         });
+
         backupFolder.file("image_mapping.json", JSON.stringify(imageMapping, null, 2));
       }
 
+      // 3. Generate the full backup JSON
       backupFolder.file("full_backup.json", JSON.stringify(parts, null, 2));
 
+      // 4. Create and download the zip
       const content = await zip.generateAsync({type: "blob"});
       const url = URL.createObjectURL(content);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `Inventory_Backup_${new Date().toISOString().split('T')[0]}.zip`);
+      link.setAttribute("download", `Full_Inventory_Project_${new Date().toISOString().split('T')[0]}.zip`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      toast({ title: "Export Successful", description: "Full backup downloaded!" });
+      toast({
+        title: "Export Successful",
+        description: "Full project source code & backup downloaded!",
+      });
     } catch (error) {
-      toast({ title: "Export Failed", description: "There was an error generating the archive.", variant: "destructive" });
+      console.error("Export error:", error);
+      toast({
+        title: "Export Failed",
+        description: "There was an error generating the complete project archive.",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Image Handling
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isEditMode = false) => {
     const files = e.target.files;
     if (!files) return;
 
@@ -295,16 +384,26 @@ export default function InventoryManager() {
     setFormImages(prev => prev.filter((_, i) => i !== index));
   };
 
+
+  const handleClear = () => {
+    setSearchQuery("");
+  };
+
   const handleDelete = (id: string) => {
     if (confirm("Are you sure you want to delete this part?")) {
       setParts(parts.filter(p => p.id !== id));
-      toast({ title: "Part Deleted", description: "The record has been removed." });
+      toast({
+        title: "Part Deleted",
+        description: "The record has been removed.",
+      });
     }
   };
 
   const openAddModal = () => {
     const initialForm: Record<string, string> = {};
-    csvHeaders.forEach(h => { initialForm[h] = ""; });
+    csvHeaders.forEach(h => {
+      initialForm[h] = "";
+    });
     setFormData(initialForm);
     setFormImages([]);
     setIsAddModalOpen(true);
@@ -312,7 +411,11 @@ export default function InventoryManager() {
 
   const handleSaveAdd = () => {
     if (!formData.partNumber && !formData[csvHeaders[0]]) {
-      toast({ title: "Validation Error", description: "Part number is required.", variant: "destructive" });
+      toast({
+        title: "Validation Error",
+        description: "Part number is required.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -329,466 +432,657 @@ export default function InventoryManager() {
 
     setParts([newPart, ...parts]);
     setIsAddModalOpen(false);
-    toast({ title: "Part Added", description: "New part has been added successfully." });
+    toast({
+      title: "Part Added",
+      description: "New part has been added successfully.",
+    });
   };
 
   const openEditModal = (part: Part) => {
     setCurrentEditPart(part);
-    const editForm: Record<string, string> = {};
-    csvHeaders.forEach(h => { editForm[h] = String(part[h] || ""); });
-    setFormData(editForm);
+    
+    // Populate form data
+    const initialForm: Record<string, string> = {};
+    csvHeaders.forEach(h => {
+      initialForm[h] = part[h]?.toString() || "";
+    });
+    // Ensure standard fields are mapped if headers differ
+    if (!initialForm.partNumber) initialForm.partNumber = part.partNumber;
+    
+    setFormData(initialForm);
     setFormImages(part.images || []);
     setIsEditModalOpen(true);
   };
 
   const handleSaveEdit = () => {
     if (!currentEditPart) return;
+    
+    const updatedParts = parts.map(p => {
+      if (p.id === currentEditPart.id) {
+        return {
+          ...p,
+          ...formData,
+          partNumber: formData.partNumber || p.partNumber,
+          images: formImages
+        };
+      }
+      return p;
+    });
 
-    const updatedPart: Part = {
-      ...currentEditPart,
-      ...formData,
-      partNumber: formData.partNumber || formData[csvHeaders[0]] || currentEditPart.partNumber,
-      images: formImages,
-    };
-
-    setParts(parts.map(p => p.id === currentEditPart.id ? updatedPart : p));
+    setParts(updatedParts);
     setIsEditModalOpen(false);
     setCurrentEditPart(null);
-    toast({ title: "Part Updated", description: "The part has been updated successfully." });
-  };
-
-  const openImageGallery = (part: Part) => {
-    setActiveImageGallery({ id: crypto.randomUUID(), partId: part.id, images: part.images || [] });
-    setIsImageGalleryOpen(true);
-  };
-
-  const handleReportLocation = (part: Part) => {
-    const newReport: LocationReport = {
-      partId: part.id,
-      partNumber: part.partNumber,
-      reportedAt: Date.now()
-    };
-    setReports(prev => [newReport, ...prev.slice(0, 99)]);
-    toast({ 
-      title: "Location Reported", 
-      description: `Part ${part.partNumber} location has been flagged for review.` 
+    toast({
+      title: "Part Updated",
+      description: "The changes have been saved.",
     });
   };
 
-  const filteredParts = useMemo(() => {
-    if (!searchQuery.trim()) return parts;
-    const query = searchQuery.toLowerCase();
-    return parts.filter(part => {
-      return csvHeaders.some(header => {
-        const value = String(part[header] || "").toLowerCase();
-        if (searchSuffixMode) {
-          return value.endsWith(query);
-        }
-        return value.includes(query);
+  const handleFormChange = (key: string, value: string) => {
+    setFormData(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Clear all data
+  const handleClearAllData = () => {
+    if (confirm("Are you sure you want to clear ALL inventory data? This cannot be undone.")) {
+      setParts([]);
+      localStorage.removeItem("inventory_parts");
+      toast({
+        title: "Data Cleared",
+        description: "All inventory records have been deleted.",
       });
+    }
+  };
+
+  // Search logic
+  const filteredParts = useMemo(() => {
+    if (!searchQuery) return []; 
+    
+    const query = searchQuery.toLowerCase().trim();
+    
+    return parts.filter(part => {
+      const partNum = (part.partNumber || "").toLowerCase().trim();
+      
+      if (searchSuffixMode) {
+        // Search by last 3 or 4 digits
+        const last3 = partNum.slice(-3);
+        const last4 = partNum.slice(-4);
+        return last3 === query || last4 === query || partNum.endsWith(query);
+      } else {
+        // Full or partial match
+        return partNum.includes(query);
+      }
     });
-  }, [parts, searchQuery, csvHeaders, searchSuffixMode]);
-
-  const totalValue = useMemo(() => {
-    return parts.reduce((sum, part) => {
-      const qty = parseFloat(String(part.quantity)) || 0;
-      const price = parseFloat(String(part.price)) || 0;
-      return sum + (qty * price);
-    }, 0);
-  }, [parts]);
-
-  const lowStockParts = useMemo(() => {
-    return parts.filter(p => parseFloat(String(p.quantity)) <= 5);
-  }, [parts]);
-
-  const recentReports = useMemo(() => {
-    return reports.slice(0, 10).map(r => {
-      const part = parts.find(p => p.id === r.partId);
-      return { ...r, partName: part?.name || "Unknown" };
-    });
-  }, [reports, parts]);
-
-  const renderFormFields = () => (
-    <div className="space-y-3">
-      {csvHeaders.map(header => (
-        <div key={header} className="space-y-1">
-          <Label htmlFor={`form-${header}`} className="text-sm font-medium capitalize">
-            {header.replace(/([A-Z])/g, ' $1').trim()}
-          </Label>
-          <Input
-            id={`form-${header}`}
-            value={formData[header] || ""}
-            onChange={e => setFormData(prev => ({ ...prev, [header]: e.target.value }))}
-            placeholder={`Enter ${header}`}
-          />
-        </div>
-      ))}
-      <div className="space-y-2">
-        <Label className="text-sm font-medium">Images</Label>
-        <div className="flex flex-wrap gap-2">
-          {formImages.map((img, i) => (
-            <div key={i} className="relative w-16 h-16 group">
-              <img src={img} alt="" className="w-full h-full object-cover rounded border" />
-              <button
-                onClick={() => removeFormImage(i)}
-                className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={() => imageInputRef.current?.click()}
-            className="w-16 h-16 border-2 border-dashed rounded flex items-center justify-center text-gray-400 hover:text-gray-600 hover:border-gray-400 transition-colors"
-          >
-            <Camera className="w-5 h-5" />
-          </button>
-        </div>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handleImageUpload}
-        />
-      </div>
-    </div>
-  );
-
-  const renderPartCard = (part: Part) => (
-    <Card key={part.id} className="group hover:shadow-md transition-shadow">
-      <CardHeader className="pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-sm font-mono truncate">{part.partNumber}</CardTitle>
-            <CardDescription className="text-xs mt-0.5 truncate">{part.name}</CardDescription>
-          </div>
-          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            {devMode && (
-              <>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditModal(part)}>
-                  <Edit2 className="h-3 w-3" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => handleDelete(part.id)}>
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="pt-0 pb-2">
-        {part.images && part.images.length > 0 && (
-          <div 
-            className="mb-2 cursor-pointer" 
-            onClick={() => openImageGallery(part)}
-          >
-            <img 
-              src={part.images[0]} 
-              alt={part.name}
-              className="w-full h-28 object-cover rounded border"
-            />
-            {part.images.length > 1 && (
-              <p className="text-xs text-muted-foreground mt-1">+{part.images.length - 1} more</p>
-            )}
-          </div>
-        )}
-        <div className="space-y-1">
-          {csvHeaders.filter(h => !['partNumber', 'name'].includes(h)).map(header => (
-            <div key={header} className="flex justify-between text-xs">
-              <span className="text-muted-foreground capitalize">{header.replace(/([A-Z])/g, ' $1').trim()}:</span>
-              <span className="font-medium truncate ml-2">{String(part[header] || "—")}</span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-      <CardFooter className="pt-1 pb-2 flex gap-1 flex-wrap">
-        {part.images && part.images.length > 0 && (
-          <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => openImageGallery(part)}>
-            <ImageIcon className="h-3 w-3 mr-1" />
-            {part.images.length}
-          </Button>
-        )}
-        <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleReportLocation(part)}>
-          <AlertCircle className="h-3 w-3 mr-1" />
-          Report
-        </Button>
-        {reports.some(r => r.partId === part.id) && (
-          <Badge variant="secondary" className="h-5 text-xs">Flagged</Badge>
-        )}
-      </CardFooter>
-    </Card>
-  );
-
-  const renderPartRow = (part: Part) => (
-    <div key={part.id} className="flex items-center gap-3 px-3 py-2 hover:bg-accent/50 rounded-lg border group">
-      {part.images && part.images.length > 0 ? (
-        <img 
-          src={part.images[0]} 
-          alt=""
-          className="w-8 h-8 object-cover rounded cursor-pointer flex-shrink-0"
-          onClick={() => openImageGallery(part)}
-        />
-      ) : (
-        <div className="w-8 h-8 bg-muted rounded flex items-center justify-center flex-shrink-0">
-          <FileSpreadsheet className="w-4 h-4 text-muted-foreground" />
-        </div>
-      )}
-      <div className="flex-1 grid gap-x-4 min-w-0" style={{gridTemplateColumns: `repeat(${Math.min(csvHeaders.length, 5)}, minmax(0, 1fr))`}}>
-        {csvHeaders.slice(0, 5).map(header => (
-          <div key={header} className="min-w-0">
-            <p className="text-xs text-muted-foreground capitalize truncate">{header.replace(/([A-Z])/g, ' $1').trim()}</p>
-            <p className="text-sm font-medium truncate">{String(part[header] || "—")}</p>
-          </div>
-        ))}
-      </div>
-      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleReportLocation(part)}>
-          <AlertCircle className="h-3.5 w-3.5" />
-        </Button>
-        {devMode && (
-          <>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditModal(part)}>
-              <Edit2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => handleDelete(part.id)}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          </>
-        )}
-      </div>
-    </div>
-  );
+  }, [parts, searchQuery, searchSuffixMode]);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950 p-4 md:p-8 font-sans">
       {/* Announcement Banner */}
       {showAnnouncement && announcement && (
-        <div className="bg-primary text-primary-foreground px-4 py-2 flex items-center justify-between text-sm">
+        <div className="max-w-5xl mx-auto mb-4 bg-primary text-primary-foreground p-3 rounded-xl flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2">
-            <Megaphone className="h-4 w-4 flex-shrink-0" />
-            <span>{announcement}</span>
+            <Megaphone className="w-5 h-5" />
+            <span className="text-sm font-medium">{announcement}</span>
           </div>
-          <button onClick={() => setShowAnnouncement(false)} className="flex-shrink-0 ml-2">
-            <X className="h-4 w-4" />
-          </button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary-foreground/20 text-primary-foreground" onClick={() => setShowAnnouncement(false)}>
+            <X className="w-4 h-4" />
+          </Button>
         </div>
       )}
 
-      {/* Header */}
-      <header className="border-b sticky top-0 z-10 bg-background/95 backdrop-blur">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="max-w-5xl mx-auto space-y-6">
+        
+        {/* Header & Controls */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white dark:bg-neutral-900 p-6 rounded-2xl shadow-sm border border-neutral-200 dark:border-neutral-800">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900 dark:text-white flex items-center gap-2">
+              <FileSpreadsheet className="w-6 h-6 text-primary" />
+              Inventory Manager
+            </h1>
+            <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
+              Manage your complete data.csv in one place
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-4 w-full md:w-auto">
             <div className="flex items-center gap-2">
-              <Archive className="h-6 w-6 text-primary" />
-              <h1 className="text-lg font-bold tracking-tight">Inventory Manager</h1>
-              {devMode && <Badge variant="secondary" className="text-xs">Admin</Badge>}
+              {/* Theme Toggle */}
+              <Button 
+                variant="outline" 
+                size="icon" 
+                onClick={() => setIsDarkMode(!isDarkMode)}
+                title="Toggle Theme"
+                className="bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800"
+              >
+                {isDarkMode ? <Moon className="w-4 h-4 text-neutral-500" /> : <Sun className="w-4 h-4 text-neutral-500" />}
+              </Button>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Stats */}
-              <div className="hidden md:flex items-center gap-3 text-sm text-muted-foreground border rounded-lg px-3 py-1.5">
-                <span><strong className="text-foreground">{parts.length}</strong> parts</span>
-                <span>·</span>
-                <span>Value: <strong className="text-foreground">${totalValue.toFixed(2)}</strong></span>
-                {lowStockParts.length > 0 && (
-                  <>
-                    <span>·</span>
-                    <span className="text-orange-500"><strong>{lowStockParts.length}</strong> low stock</span>
-                  </>
-                )}
-              </div>
+            <div className="flex items-center gap-2 px-3 py-2 bg-neutral-100 dark:bg-neutral-800 rounded-lg">
+              <Settings className="w-4 h-4 text-neutral-500" />
+              <Label htmlFor="dev-mode" className="text-sm font-medium cursor-pointer">Dev Mode</Label>
+              <Switch 
+                id="dev-mode" 
+                checked={devMode}
+                onCheckedChange={handleDevModeToggle}
+                data-testid="toggle-devmode"
+              />
+            </div>
 
-              {/* Controls */}
-              <div className="flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={() => setIsDarkMode(!isDarkMode)}>
-                  {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                </Button>
+            <div className="flex gap-2">
+              {devMode && (
+                <>
+                  <Button 
+                    variant="outline" 
+                    className="bg-amber-50 text-amber-700 hover:bg-amber-100 border-amber-200"
+                    onClick={() => setIsMasterDashboardOpen(true)}
+                    title="Master Dashboard"
+                  >
+                    <Shield className="w-4 h-4 mr-2" />
+                    Master Dashboard
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Upload CSV"
+                    data-testid="btn-upload-csv"
+                  >
+                    <Upload className="w-4 h-4" />
+                  </Button>
+                  <input 
+                    type="file" 
+                    accept=".csv" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    className="hidden" 
+                  />
+                  
+                  <Button 
+                    variant="outline" 
+                    size="icon"
+                    onClick={exportToCSV}
+                    title="Download CSV Only"
+                    data-testid="btn-download-csv"
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+    
+                  <Button 
+                    variant="default" 
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-2"
+                    onClick={exportCompleteProject}
+                    title="Export Complete Backup (CSV + Images)"
+                  >
+                    <Archive className="w-4 h-4 hidden sm:block" />
+                    <span className="hidden sm:block">Export Backup</span>
+                    <span className="sm:hidden"><Archive className="w-4 h-4" /></span>
+                  </Button>
+    
+                  <Button 
+                    variant="secondary"
+                    className="flex items-center gap-2 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800"
+                    onClick={() => {
+                      const link = document.createElement("a");
+                      link.href = "/source-code.zip";
+                      link.setAttribute("download", "inventory-app-source-code.zip");
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                      toast({
+                        title: "Download Started",
+                        description: "Downloading the full project source code...",
+                      });
+                    }}
+                    title="Download Full Project Source Code"
+                  >
+                    <Download className="w-4 h-4 hidden sm:block" />
+                    <span className="hidden sm:block">Download Full Project</span>
+                    <span className="sm:hidden"><Download className="w-4 h-4" /></span>
+                  </Button>
+    
+                  <Button 
+                    variant="destructive" 
+                    size="icon"
+                    onClick={handleClearAllData}
+                    title="Clear All Data"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Search Section */}
+        <Card className="shadow-sm border-neutral-200 dark:border-neutral-800">
+          <CardContent className="p-6">
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-medium">Search Parts</Label>
+                <div className="flex items-center gap-2">
+                  <Switch 
+                    id="suffix-mode" 
+                    checked={searchSuffixMode}
+                    onCheckedChange={setSearchSuffixMode}
+                  />
+                  <Label htmlFor="suffix-mode" className="text-xs text-neutral-500 cursor-pointer">
+                    Last 3/4 Digits
+                  </Label>
+                </div>
+              </div>
+              
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-neutral-400" />
+                  <Input 
+                    placeholder={searchSuffixMode ? "Enter last 3 or 4 digits..." : "Enter Part Number..."}
+                    className="pl-10 h-12 text-lg"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    data-testid="input-search"
+                    autoFocus
+                  />
+                  {searchQuery && (
+                    <button 
+                      onClick={handleClear}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                      data-testid="btn-clear-search"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                
                 <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => setIsGridView(!isGridView)}
+                  className="h-12 px-8 font-medium" 
+                  onClick={() => {/* Search is reactive, this just feels good UX */}}
+                  data-testid="btn-search"
                 >
-                  {isGridView ? <List className="h-4 w-4" /> : <LayoutGrid className="h-4 w-4" />}
+                  SEARCH
                 </Button>
+                
                 {devMode && (
-                  <Button variant="ghost" size="icon" onClick={() => setIsMasterDashboardOpen(true)}>
-                    <Settings className="h-4 w-4" />
+                  <Button 
+                    variant="secondary" 
+                    className="h-12 px-6 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/40 border border-green-200 dark:border-green-800"
+                    onClick={openAddModal}
+                    data-testid="btn-add-part"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add New
                   </Button>
                 )}
               </div>
-
-              {/* Dev mode toggle */}
-              <div className="flex items-center gap-1.5">
-                <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                <Switch
-                  checked={devMode}
-                  onCheckedChange={handleDevModeToggle}
-                  className="scale-75"
-                />
-              </div>
             </div>
-          </div>
+          </CardContent>
+        </Card>
 
-          {/* Search & Actions */}
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search parts..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="pl-8 pr-8"
-              />
-              {searchQuery && (
-                <button onClick={() => setSearchQuery("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                  <X className="h-4 w-4" />
-                </button>
+        {/* Results Section */}
+        <div className="space-y-4">
+          {searchQuery ? (
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">
+                Search Results ({filteredParts.length})
+              </h2>
+              {devMode && (
+                <div className="flex items-center gap-1 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-1 hidden sm:flex">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={`h-7 w-7 rounded-md ${isGridView ? 'bg-neutral-100 dark:bg-neutral-800' : ''}`} 
+                    onClick={() => setIsGridView(true)}
+                    title="Grid View"
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={`h-7 w-7 rounded-md ${!isGridView ? 'bg-neutral-100 dark:bg-neutral-800' : ''}`} 
+                    onClick={() => setIsGridView(false)}
+                    title="List View"
+                  >
+                    <List className="w-4 h-4" />
+                  </Button>
+                </div>
               )}
             </div>
-
-            <div className="flex items-center gap-1.5 text-sm">
-              <Label htmlFor="suffix-mode" className="text-xs text-muted-foreground whitespace-nowrap">Suffix</Label>
-              <Switch id="suffix-mode" checked={searchSuffixMode} onCheckedChange={setSearchSuffixMode} className="scale-75" />
+          ) : (
+            <div className="flex items-center justify-center p-12 border-2 border-dashed border-neutral-200 dark:border-neutral-800 rounded-xl bg-neutral-50/50 dark:bg-neutral-900/20 text-center">
+              <div className="max-w-sm space-y-2">
+                <Search className="w-8 h-8 text-neutral-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100">Ready to search</h3>
+                <p className="text-sm text-neutral-500">
+                  {parts.length > 0 
+                    ? `Enter a part number above to search through your ${parts.length} loaded parts.` 
+                    : "Upload a data.csv file first to start searching parts."}
+                </p>
+                {parts.length === 0 && (
+                  <Button 
+                    variant="outline" 
+                    className="mt-4"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Upload className="w-4 h-4 mr-2" /> Upload CSV
+                  </Button>
+                )}
+              </div>
             </div>
+          )}
 
-            <div className="flex gap-1.5">
-              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-4 w-4 mr-1.5" />
-                Import CSV
-              </Button>
-              <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileUpload} />
-              
-              <Button variant="outline" size="sm" onClick={exportToCSV}>
-                <Download className="h-4 w-4 mr-1.5" />
-                CSV
-              </Button>
-
-              <Button variant="outline" size="sm" onClick={exportCompleteProject}>
-                <Archive className="h-4 w-4 mr-1.5" />
-                ZIP
-              </Button>
-
+          {searchQuery && filteredParts.length === 0 && (
+            <div className="p-8 text-center bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 shadow-sm">
+              <AlertCircle className="w-8 h-8 text-orange-500 mx-auto mb-3" />
+              <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100">No parts found</h3>
+              <p className="text-neutral-500 mt-1">Try a different part number or check if your search mode is correct.</p>
               {devMode && (
-                <Button size="sm" onClick={openAddModal}>
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Add Part
+                <Button className="mt-4" onClick={openAddModal}>
+                  <Plus className="w-4 h-4 mr-2" /> Add "{searchQuery}" as New Part
                 </Button>
               )}
             </div>
+          )}
+
+          <div className={isGridView ? "grid grid-cols-1 lg:grid-cols-2 gap-4" : "flex flex-col gap-4"}>
+            {filteredParts.map((part) => (
+              <Card key={part.id} className="overflow-hidden shadow-sm hover:shadow-md transition-shadow border-neutral-200 dark:border-neutral-800">
+                <div className="p-5">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <h3 className="text-xl font-bold font-mono tracking-tight text-primary">
+                          {part.partNumber}
+                        </h3>
+                      </div>
+                      {part.name && <p className="text-lg font-medium text-neutral-700 dark:text-neutral-300">{part.name}</p>}
+                    </div>
+                    
+                    {devMode && (
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/30" onClick={() => openEditModal(part)}>
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/30" onClick={() => handleDelete(part.id)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    )}
+                    {!devMode && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        className="text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-900/30 h-8"
+                        onClick={() => {
+                          const existingReport = reports.find(r => r.partId === part.id);
+                          if (existingReport) {
+                            toast({
+                              title: "Already Reported",
+                              description: "This part's location has already been reported.",
+                            });
+                            return;
+                          }
+                          const newReport: LocationReport = {
+                            partId: part.id,
+                            partNumber: part.partNumber,
+                            reportedAt: Date.now()
+                          };
+                          setReports([...reports, newReport]);
+                          toast({
+                            title: "Report Submitted",
+                            description: "An admin has been notified to verify the location.",
+                          });
+                        }}
+                      >
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        Report Wrong Location
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="bg-neutral-50 dark:bg-neutral-900/50 rounded-lg p-4 grid grid-cols-2 gap-y-4 gap-x-6 border border-neutral-100 dark:border-neutral-800 mb-4">
+                    {/* Display primary fields first if they exist */}
+                    {['quantity', 'location', 'price'].map((key) => {
+                      if (part[key] !== undefined && part[key] !== '') {
+                        return (
+                          <div key={key} className="space-y-1">
+                            <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">{key}</p>
+                            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                              {key === 'price' ? `$${part[key]}` : part[key]}
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
+                    
+                    {/* Display other dynamic CSV fields */}
+                    {Object.entries(part).map(([key, value]) => {
+                      if (!['id', 'partNumber', 'name', 'quantity', 'location', 'price', 'images'].includes(key) && value) {
+                        return (
+                          <div key={key} className="space-y-1">
+                            <p className="text-xs font-medium text-neutral-500 uppercase tracking-wider">{key}</p>
+                            <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100 break-words">{String(value)}</p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+
+                  {/* Photo Feature Area */}
+                  <div className="pt-2 border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="flex items-center justify-between mb-2">
+                       <span className="text-xs font-medium text-neutral-500 uppercase flex items-center gap-1">
+                          <ImageIcon className="w-3 h-3" /> Photos ({part.images?.length || 0})
+                       </span>
+                    </div>
+                    
+                    <div className="flex gap-2 overflow-x-auto pb-2">
+                      {part.images?.map((img, i) => (
+                        <div 
+                          key={i} 
+                          className="relative w-16 h-16 rounded-md overflow-hidden shrink-0 border border-neutral-200 dark:border-neutral-700 cursor-pointer group"
+                          onClick={() => {
+                            setActiveImageGallery({id: part.id, partId: part.partNumber, images: part.images});
+                            setIsImageGalleryOpen(true);
+                          }}
+                        >
+                          <img src={img} alt={`Part ${part.partNumber} photo ${i+1}`} className="w-full h-full object-cover" />
+                        </div>
+                      ))}
+                      
+                      {devMode && (
+                        <div 
+                          onClick={() => {
+                             setCurrentEditPart(part);
+                             const initialForm: Record<string, string> = {};
+                             csvHeaders.forEach(h => {
+                               initialForm[h] = part[h]?.toString() || "";
+                             });
+                             if (!initialForm.partNumber) initialForm.partNumber = part.partNumber;
+                             
+                             setFormData(initialForm);
+                             setFormImages(part.images || []);
+                             setIsEditModalOpen(true);
+                          }}
+                          className="w-16 h-16 rounded-md border border-dashed border-neutral-300 dark:border-neutral-700 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-400 hover:text-neutral-600"
+                        >
+                          <Plus className="w-5 h-5 mb-0.5" />
+                        </div>
+                      )}
+                      
+                      {(!part.images || part.images.length === 0) && !devMode && (
+                         <div className="w-full py-4 text-center text-xs text-neutral-400 italic">
+                           No photos available. Enable Dev Mode to add.
+                         </div>
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              </Card>
+            ))}
           </div>
         </div>
-      </header>
 
-      {/* Main content */}
-      <main className="container mx-auto px-4 py-6">
-        {parts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <FileSpreadsheet className="h-16 w-16 text-muted-foreground/40 mb-4" />
-            <h2 className="text-xl font-semibold mb-2">No inventory data</h2>
-            <p className="text-muted-foreground mb-6 max-w-sm">
-              Import a CSV file to get started, or add parts manually if you're in admin mode.
-            </p>
-            <div className="flex gap-2">
-              <Button onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-4 w-4 mr-2" />
-                Import CSV
-              </Button>
-              {devMode && (
-                <Button variant="outline" onClick={openAddModal}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Part
-                </Button>
-              )}
-            </div>
-          </div>
-        ) : (
-          <>
-            {filteredParts.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Search className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p>No parts match "{searchQuery}"</p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-sm text-muted-foreground">
-                    {filteredParts.length === parts.length 
-                      ? `${parts.length} parts` 
-                      : `${filteredParts.length} of ${parts.length} parts`}
-                  </p>
-                </div>
+      </div>
 
-                {isGridView ? (
-                  <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                    {filteredParts.map(part => renderPartCard(part))}
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {filteredParts.map(part => renderPartRow(part))}
-                  </div>
-                )}
-              </>
-            )}
-          </>
-        )}
-      </main>
-
-      {/* Password Prompt Dialog */}
-      <Dialog open={showPasswordPrompt} onOpenChange={setShowPasswordPrompt}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Admin Access
-            </DialogTitle>
-            <DialogDescription>Enter the admin password to enable developer mode.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              type="password"
-              placeholder="Enter password"
-              value={passwordInput}
-              onChange={e => setPasswordInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handlePasswordSubmit(); }}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowPasswordPrompt(false); setPasswordInput(""); }}>
-              Cancel
-            </Button>
-            <Button onClick={handlePasswordSubmit}>Unlock</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Part Dialog */}
+      {/* Add Modal */}
       <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add New Part</DialogTitle>
-            <DialogDescription>Fill in the details for the new inventory part.</DialogDescription>
+            <DialogTitle className="text-xl">Add New Part</DialogTitle>
           </DialogHeader>
-          {renderFormFields()}
+          <div className="grid gap-4 py-4">
+             {/* Photo Upload in Modal */}
+             <div className="space-y-3 mb-2">
+                <Label className="text-sm font-medium">Photos</Label>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {formImages.map((img, i) => (
+                    <div key={i} className="relative w-20 h-20 rounded-md overflow-hidden shrink-0 border border-neutral-200">
+                      <img src={img} alt="preview" className="w-full h-full object-cover" />
+                      <button 
+                        onClick={() => removeFormImage(i)}
+                        className="absolute top-1 right-1 bg-black/50 p-1 rounded-full hover:bg-red-500 text-white transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <div 
+                    onClick={() => imageInputRef.current?.click()}
+                    className="w-20 h-20 rounded-md border border-dashed border-neutral-300 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 text-neutral-500"
+                  >
+                    <Camera className="w-6 h-6 mb-1" />
+                    <span className="text-[10px] uppercase font-medium">Add</span>
+                  </div>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    multiple
+                    ref={imageInputRef} 
+                    onChange={(e) => handleImageUpload(e)} 
+                    className="hidden" 
+                  />
+                </div>
+              </div>
+
+            {csvHeaders.map((header) => (
+              <div key={header} className="grid gap-2">
+                <Label htmlFor={`add-${header}`} className="capitalize">{header}</Label>
+                <Input
+                  id={`add-${header}`}
+                  value={formData[header] || ""}
+                  onChange={(e) => handleFormChange(header, e.target.value)}
+                  placeholder={`Enter ${header}...`}
+                  required={header === 'partNumber' || header === csvHeaders[0]}
+                />
+              </div>
+            ))}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsAddModalOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveAdd}>Add Part</Button>
+            <Button onClick={handleSaveAdd}>Save Part</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Edit Part Dialog */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      {/* Password Prompt Modal for Dev Mode */}
+      <Dialog open={showPasswordPrompt} onOpenChange={(open) => {
+        if (!open) {
+          setShowPasswordPrompt(false);
+          setPasswordInput("");
+        }
+      }}>
+        <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
-            <DialogTitle>Edit Part</DialogTitle>
-            <DialogDescription>Update the details for this part.</DialogDescription>
+            <DialogTitle>Admin Access Required</DialogTitle>
           </DialogHeader>
-          {renderFormFields()}
+          <div className="py-4">
+            <Label htmlFor="admin-password">Enter Password</Label>
+            <Input
+              id="admin-password"
+              type="password"
+              value={passwordInput}
+              onChange={(e) => setPasswordInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handlePasswordSubmit();
+                }
+              }}
+              placeholder="Password..."
+              className="mt-2"
+              autoFocus
+            />
+            <p className="text-xs text-neutral-500 mt-2">
+              Note: This action requires administrator privileges.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowPasswordPrompt(false);
+              setPasswordInput("");
+            }}>Cancel</Button>
+            <Button onClick={handlePasswordSubmit}>Login</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Modal */}
+      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+        <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-xl">Edit Part {currentEditPart?.partNumber}</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+              {/* Photo Upload in Modal */}
+              <div className="space-y-3 mb-2">
+                <Label className="text-sm font-medium">Photos</Label>
+                <div className="flex gap-3 overflow-x-auto pb-2">
+                  {formImages.map((img, i) => (
+                    <div key={i} className="relative w-20 h-20 rounded-md overflow-hidden shrink-0 border border-neutral-200">
+                      <img src={img} alt="preview" className="w-full h-full object-cover" />
+                      <button 
+                        onClick={() => removeFormImage(i)}
+                        className="absolute top-1 right-1 bg-black/50 p-1 rounded-full hover:bg-red-500 text-white transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <div 
+                    onClick={() => imageInputRef.current?.click()}
+                    className="w-20 h-20 rounded-md border border-dashed border-neutral-300 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 text-neutral-500"
+                  >
+                    <Camera className="w-6 h-6 mb-1" />
+                    <span className="text-[10px] uppercase font-medium">Add</span>
+                  </div>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    multiple
+                    ref={imageInputRef} 
+                    onChange={(e) => handleImageUpload(e)} 
+                    className="hidden" 
+                  />
+                </div>
+              </div>
+
+            {csvHeaders.map((header) => (
+              <div key={header} className="grid gap-2">
+                <Label htmlFor={`edit-${header}`} className="capitalize">{header}</Label>
+                <Input
+                  id={`edit-${header}`}
+                  value={formData[header] || ""}
+                  onChange={(e) => handleFormChange(header, e.target.value)}
+                  placeholder={`Enter ${header}...`}
+                />
+              </div>
+            ))}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
             <Button onClick={handleSaveEdit}>Save Changes</Button>
@@ -796,178 +1090,337 @@ export default function InventoryManager() {
         </DialogContent>
       </Dialog>
 
-      {/* Image Gallery Dialog */}
+      {/* Image Gallery Modal */}
       <Dialog open={isImageGalleryOpen} onOpenChange={setIsImageGalleryOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ImageIcon className="h-5 w-5" />
-              Image Gallery
-            </DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {activeImageGallery.images.map((img, i) => (
-              <div key={i} className="aspect-square">
-                <img src={img} alt={`Image ${i+1}`} className="w-full h-full object-cover rounded-lg border" />
-              </div>
-            ))}
+        <DialogContent className="max-w-3xl p-1 bg-neutral-900 border-none">
+          <div className="flex justify-between p-3 absolute top-0 w-full z-10 bg-gradient-to-b from-black/60 to-transparent">
+             <h3 className="text-white font-medium">{activeImageGallery.partId}</h3>
+             <DialogClose className="text-white hover:text-neutral-300 bg-black/20 rounded-full p-1">
+               <X className="w-5 h-5" />
+             </DialogClose>
           </div>
-          {activeImageGallery.images.length === 0 && (
-            <div className="text-center py-8 text-muted-foreground">No images available.</div>
-          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[85vh] overflow-y-auto p-2 pt-12">
+             {activeImageGallery.images.map((img, i) => (
+                <div key={i} className="relative rounded bg-black flex items-center justify-center min-h-[200px] group">
+                   <img src={img} alt={`Gallery ${i}`} className="max-w-full max-h-full object-contain" />
+                   {devMode && (
+                     <Button 
+                       variant="destructive" 
+                       size="icon" 
+                       className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                       onClick={() => {
+                         if (confirm("Delete this photo?")) {
+                           const updatedParts = parts.map(p => {
+                             if (p.id === activeImageGallery.id) {
+                               const newImages = [...p.images];
+                               newImages.splice(i, 1);
+                               return { ...p, images: newImages };
+                             }
+                             return p;
+                           });
+                           setParts(updatedParts);
+                           
+                           const newActiveImages = [...activeImageGallery.images];
+                           newActiveImages.splice(i, 1);
+                           setActiveImageGallery(prev => ({ ...prev, images: newActiveImages }));
+                           
+                           if (newActiveImages.length === 0) {
+                             setIsImageGalleryOpen(false);
+                           }
+                           
+                           toast({
+                             title: "Photo Deleted",
+                             description: "The photo has been removed from this part."
+                           });
+                         }
+                       }}
+                     >
+                       <Trash2 className="w-4 h-4" />
+                     </Button>
+                   )}
+                </div>
+             ))}
+          </div>
         </DialogContent>
       </Dialog>
 
-      {/* Master Dashboard / Admin Dialog */}
+      {/* Master Dashboard Modal */}
       <Dialog open={isMasterDashboardOpen} onOpenChange={setIsMasterDashboardOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              Admin Dashboard
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {/* Announcement */}
-            <div className="space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Megaphone className="h-4 w-4" />
-                Announcement Banner
-              </h3>
-              <Input
-                value={announcement}
-                onChange={e => setAnnouncement(e.target.value)}
-                placeholder="Enter announcement text..."
-              />
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={showAnnouncement}
-                  onCheckedChange={setShowAnnouncement}
-                />
-                <Label className="text-sm">Show announcement</Label>
+        <DialogContent className="max-w-5xl h-[85vh] flex flex-col p-0 overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+          <div className="flex items-center justify-between p-4 border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950">
+            <div className="flex items-center gap-2">
+              <Shield className="w-6 h-6 text-amber-500" />
+              <div>
+                <DialogTitle className="text-xl">Master Dashboard</DialogTitle>
+                <DialogDescription>Premium Management & Controls</DialogDescription>
               </div>
             </div>
-
-            {/* Password Management */}
-            <div className="space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Shield className="h-4 w-4" />
-                Admin Passwords
-              </h3>
-              <div className="space-y-2">
-                {adminPasswords.map((pwd, i) => (
-                  <div key={i} className="flex gap-2">
-                    <Input
-                      type="text"
-                      value={pwd}
-                      onChange={e => {
-                        const updated = [...adminPasswords];
-                        updated[i] = e.target.value;
-                        setAdminPasswords(updated);
-                      }}
-                      className="font-mono text-sm"
-                    />
-                    {adminPasswords.length > 1 && (
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => setAdminPasswords(adminPasswords.filter((_, idx) => idx !== i))}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => setAdminPasswords([...adminPasswords, ""])}
-                >
-                  <Plus className="h-4 w-4 mr-1.5" />
-                  Add Password
-                </Button>
-              </div>
-            </div>
-
-            {/* Recent Reports */}
-            <div className="space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <AlertCircle className="h-4 w-4" />
-                Location Reports ({reports.length})
-              </h3>
-              {recentReports.length > 0 ? (
-                <div className="space-y-1">
-                  {recentReports.map((r, i) => (
-                    <div key={i} className="flex justify-between items-center text-sm py-1.5 border-b last:border-0">
-                      <div>
-                        <span className="font-mono font-medium">{r.partNumber}</span>
-                        <span className="text-muted-foreground ml-2">{r.partName}</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(r.reportedAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No location reports yet.</p>
-              )}
-              {reports.length > 0 && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => { setReports([]); toast({ title: "Reports cleared" }); }}
-                >
-                  Clear All Reports
-                </Button>
-              )}
-            </div>
-
-            {/* CSV Column Management */}
-            <div className="space-y-3">
-              <h3 className="font-semibold flex items-center gap-2">
-                <FileSpreadsheet className="h-4 w-4" />
-                Data Columns
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {csvHeaders.map((header, i) => (
-                  <Badge key={i} variant="outline" className="text-xs">
-                    {header}
-                  </Badge>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground">Columns are automatically set when importing a CSV file.</p>
-            </div>
-
-            {/* Danger Zone */}
-            <div className="space-y-3 pt-3 border-t">
-              <h3 className="font-semibold text-destructive">Danger Zone</h3>
+          </div>
+          
+          <div className="flex flex-1 overflow-hidden">
+            {/* Sidebar */}
+            <div className="w-64 bg-white dark:bg-neutral-950 border-r border-neutral-200 dark:border-neutral-800 p-4 space-y-2 overflow-y-auto">
               <Button 
-                variant="destructive" 
-                size="sm"
-                onClick={() => {
-                  if (confirm("This will delete all inventory data. Are you sure?")) {
-                    setParts([]);
-                    localStorage.removeItem("inventory_parts");
-                    localStorage.removeItem("inventory_headers");
-                    setCsvHeaders(["partNumber", "name", "quantity", "location", "price"]);
-                    setIsMasterDashboardOpen(false);
-                    toast({ title: "Inventory cleared", description: "All parts have been removed." });
-                  }
-                }}
+                variant={activeDashboardTab === "overview" ? "default" : "ghost"} 
+                className="w-full justify-start"
+                onClick={() => setActiveDashboardTab("overview")}
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Clear All Inventory
+                <Settings className="w-4 h-4 mr-2" />
+                Overview
+              </Button>
+              <Button 
+                variant={activeDashboardTab === "announcements" ? "default" : "ghost"} 
+                className="w-full justify-start"
+                onClick={() => setActiveDashboardTab("announcements")}
+              >
+                <Megaphone className="w-4 h-4 mr-2" />
+                Announcements
+              </Button>
+              <Button 
+                variant={activeDashboardTab === "qa" ? "default" : "ghost"} 
+                className="w-full justify-start"
+                onClick={() => setActiveDashboardTab("qa")}
+              >
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Q & A
+              </Button>
+              <Button 
+                variant={activeDashboardTab === "users" ? "default" : "ghost"} 
+                className="w-full justify-start"
+                onClick={() => setActiveDashboardTab("users")}
+              >
+                <Users className="w-4 h-4 mr-2" />
+                User Management
               </Button>
             </div>
-          </div>
 
-          <DialogFooter>
-            <Button onClick={() => setIsMasterDashboardOpen(false)}>Close</Button>
-          </DialogFooter>
+            {/* Main Content Area */}
+            <div className="flex-1 p-6 overflow-y-auto bg-neutral-50 dark:bg-neutral-900">
+              {activeDashboardTab === "overview" && (
+                <div className="space-y-6">
+                  <h3 className="text-lg font-medium">System Overview</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-neutral-500">Total Parts</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-3xl font-bold">{parts.length}</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-neutral-500">Total Images</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-3xl font-bold">{parts.reduce((acc, p) => acc + (p.images?.length || 0), 0)}</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm text-neutral-500">System Status</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-3xl font-bold text-green-500">Online</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Data Management Actions</CardTitle>
+                      <CardDescription>Perform master data operations</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between p-3 border rounded-lg">
+                          <div>
+                            <p className="font-medium">Force Sync / Optimize</p>
+                            <p className="text-sm text-neutral-500">Rebuild indices for faster searching</p>
+                          </div>
+                          <Button variant="outline">Optimize</Button>
+                        </div>
+                        <div className="flex items-center justify-between p-3 border rounded-lg border-red-200 bg-red-50 dark:bg-red-900/10">
+                          <div>
+                            <p className="font-medium text-red-600">Factory Reset</p>
+                            <p className="text-sm text-red-500">Completely wipe all data and settings</p>
+                          </div>
+                          <Button variant="destructive">Reset</Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {activeDashboardTab === "announcements" && (
+                <div className="space-y-6">
+                  <h3 className="text-lg font-medium">Global Announcements</h3>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Current Announcement</CardTitle>
+                      <CardDescription>This message will be displayed to all users at the top of the screen.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Message</Label>
+                        <Input 
+                          value={announcement} 
+                          onChange={(e) => setAnnouncement(e.target.value)} 
+                          placeholder="Enter announcement text..."
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch 
+                          checked={showAnnouncement} 
+                          onCheckedChange={setShowAnnouncement} 
+                          id="show-announcement"
+                        />
+                        <Label htmlFor="show-announcement">Display announcement banner</Label>
+                      </div>
+                    </CardContent>
+                    <CardFooter>
+                      <Button onClick={() => toast({title: "Announcement Saved", description: "Changes have been published to all users."})}>
+                        Publish Changes
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </div>
+              )}
+
+              {activeDashboardTab === "qa" && (
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-medium">Q & A / Support Messages</h3>
+                  </div>
+                  
+                  {reports.length === 0 ? (
+                    <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-xl p-8 text-center bg-white dark:bg-neutral-900">
+                      <MessageSquare className="w-12 h-12 text-neutral-300 mx-auto mb-4" />
+                      <h4 className="text-lg font-medium mb-1">No pending messages</h4>
+                      <p className="text-neutral-500 text-sm">When users submit questions or report locations, they will appear here.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4">
+                      {reports.map((report, i) => (
+                        <Card key={i}>
+                          <CardHeader className="pb-2">
+                            <div className="flex justify-between">
+                              <CardTitle className="text-base text-red-600">Location Report</CardTitle>
+                              <span className="text-xs text-neutral-500">{new Date(report.reportedAt).toLocaleDateString()}</span>
+                            </div>
+                            <CardDescription>Part Number: {report.partNumber}</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <p className="text-sm">A user reported that the location for this part might be incorrect.</p>
+                          </CardContent>
+                          <CardFooter className="flex justify-end gap-2 pt-0">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={() => {
+                                const part = parts.find(p => p.id === report.partId);
+                                if (part) {
+                                  setCurrentEditPart(part);
+                                  const initialForm: Record<string, string> = {};
+                                  csvHeaders.forEach(h => { initialForm[h] = part[h]?.toString() || ""; });
+                                  if (!initialForm.partNumber) initialForm.partNumber = part.partNumber;
+                                  setFormData(initialForm);
+                                  setFormImages(part.images || []);
+                                  setIsEditModalOpen(true);
+                                  setIsMasterDashboardOpen(false);
+                                } else {
+                                  toast({ title: "Part Not Found", description: "This part may have been deleted.", variant: "destructive" });
+                                }
+                              }}
+                            >
+                              Edit Part
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => setReports(prev => prev.filter((_, index) => index !== i))}>Dismiss</Button>
+                          </CardFooter>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeDashboardTab === "users" && (
+                <div className="space-y-6">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-lg font-medium">Sub-Admin Passwords</h3>
+                  </div>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Manage Access</CardTitle>
+                      <CardDescription>Add or remove passwords for sub-admin access.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex gap-2">
+                        <Input 
+                          placeholder="New password..." 
+                          id="new-password-input"
+                          type="password"
+                        />
+                        <Button onClick={() => {
+                          const input = document.getElementById("new-password-input") as HTMLInputElement;
+                          if (input && input.value) {
+                            if (!adminPasswords.includes(input.value)) {
+                              setAdminPasswords([...adminPasswords, input.value]);
+                              input.value = "";
+                              toast({ title: "Password Added", description: "New sub-admin password has been saved." });
+                            } else {
+                              toast({ title: "Duplicate", description: "This password already exists.", variant: "destructive" });
+                            }
+                          }
+                        }}>Add</Button>
+                      </div>
+                      
+                      <div className="rounded-md border border-neutral-200 dark:border-neutral-800">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-neutral-100 dark:bg-neutral-800 border-b border-neutral-200 dark:border-neutral-800">
+                            <tr>
+                              <th className="px-4 py-3 font-medium">Password</th>
+                              <th className="px-4 py-3 font-medium text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {adminPasswords.map((pwd, i) => (
+                              <tr key={i} className="border-b border-neutral-200 dark:border-neutral-800 last:border-0">
+                                <td className="px-4 py-3 font-mono">{pwd.replace(/./g, '*')} <span className="text-xs text-neutral-400 ml-2">(hidden)</span></td>
+                                <td className="px-4 py-3 text-right">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/30 h-8"
+                                    onClick={() => {
+                                      if (adminPasswords.length <= 1) {
+                                        toast({ title: "Cannot Delete", description: "You must have at least one admin password.", variant: "destructive" });
+                                        return;
+                                      }
+                                      if (confirm("Remove this password?")) {
+                                        setAdminPasswords(prev => prev.filter((_, index) => index !== i));
+                                        toast({ title: "Password Removed", description: "Sub-admin access revoked for this password." });
+                                      }
+                                    }}
+                                  >
+                                    Remove
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
+
     </div>
   );
 }
