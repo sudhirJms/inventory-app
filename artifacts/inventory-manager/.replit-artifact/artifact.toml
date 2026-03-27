@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Inventory Data Manager"
+version = "1.0.0"
+id = "artifacts/inventory-manager"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22192
+
+[services.development]
+run = "pnpm --filter @workspace/inventory-manager run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/inventory-manager", "run", "build" ]
+publicDir = "artifacts/inventory-manager/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22192"
+BASE_PATH = "/"
