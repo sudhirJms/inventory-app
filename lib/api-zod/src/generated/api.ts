@@ -14,3 +14,147 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary Get full inventory state
+ */
+export const GetInventoryResponse = zod.object({
+  parts: zod.array(
+    zod.object({
+      id: zod.string(),
+      partNumber: zod.string(),
+      name: zod.string().optional(),
+      quantity: zod.string().optional(),
+      location: zod.string().optional(),
+      price: zod.string().optional(),
+      images: zod.array(zod.string()).optional(),
+    }),
+  ),
+  headers: zod.array(zod.string()),
+  announcement: zod.string(),
+  showAnnouncement: zod.boolean(),
+});
+
+/**
+ * @summary Add a single part
+ */
+export const AddPartBody = zod.object({
+  partNumber: zod.string(),
+  name: zod.string().optional(),
+  quantity: zod.string().optional(),
+  location: zod.string().optional(),
+  price: zod.string().optional(),
+  images: zod.array(zod.string()).optional(),
+});
+
+/**
+ * @summary Replace all parts (bulk upload)
+ */
+export const ReplacePartsBody = zod.object({
+  parts: zod.array(
+    zod.object({
+      id: zod.string(),
+      partNumber: zod.string(),
+      name: zod.string().optional(),
+      quantity: zod.string().optional(),
+      location: zod.string().optional(),
+      price: zod.string().optional(),
+      images: zod.array(zod.string()).optional(),
+    }),
+  ),
+  headers: zod.array(zod.string()),
+});
+
+export const ReplacePartsResponse = zod.object({
+  parts: zod.array(
+    zod.object({
+      id: zod.string(),
+      partNumber: zod.string(),
+      name: zod.string().optional(),
+      quantity: zod.string().optional(),
+      location: zod.string().optional(),
+      price: zod.string().optional(),
+      images: zod.array(zod.string()).optional(),
+    }),
+  ),
+  headers: zod.array(zod.string()),
+  announcement: zod.string(),
+  showAnnouncement: zod.boolean(),
+});
+
+/**
+ * @summary Update a part
+ */
+export const UpdatePartParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const UpdatePartBody = zod.object({
+  partNumber: zod.string(),
+  name: zod.string().optional(),
+  quantity: zod.string().optional(),
+  location: zod.string().optional(),
+  price: zod.string().optional(),
+  images: zod.array(zod.string()).optional(),
+});
+
+export const UpdatePartResponse = zod.object({
+  id: zod.string(),
+  partNumber: zod.string(),
+  name: zod.string().optional(),
+  quantity: zod.string().optional(),
+  location: zod.string().optional(),
+  price: zod.string().optional(),
+  images: zod.array(zod.string()).optional(),
+});
+
+/**
+ * @summary Delete a part
+ */
+export const DeletePartParams = zod.object({
+  id: zod.coerce.string(),
+});
+
+export const DeletePartResponse = zod.object({
+  message: zod.string(),
+});
+
+/**
+ * @summary Update announcement
+ */
+export const UpdateAnnouncementBody = zod.object({
+  announcement: zod.string(),
+  showAnnouncement: zod.boolean(),
+});
+
+export const UpdateAnnouncementResponse = zod.object({
+  announcement: zod.string(),
+  showAnnouncement: zod.boolean(),
+});
+
+/**
+ * @summary Get all location reports
+ */
+export const GetReportsResponseItem = zod.object({
+  id: zod.number(),
+  partId: zod.string(),
+  partNumber: zod.string(),
+  reportedAt: zod.number(),
+});
+export const GetReportsResponse = zod.array(GetReportsResponseItem);
+
+/**
+ * @summary Add a location report
+ */
+export const AddReportBody = zod.object({
+  partId: zod.string(),
+  partNumber: zod.string(),
+  reportedAt: zod.number(),
+});
+
+/**
+ * @summary Clear all reports
+ */
+export const ClearReportsResponse = zod.object({
+  message: zod.string(),
+});

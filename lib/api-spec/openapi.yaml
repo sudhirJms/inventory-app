@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: inventory
+    description: Inventory management operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,162 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /inventory:
+    get:
+      operationId: getInventory
+      tags: [inventory]
+      summary: Get full inventory state
+      responses:
+        "200":
+          description: Inventory state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryState"
+
+  /inventory/parts:
+    post:
+      operationId: addPart
+      tags: [inventory]
+      summary: Add a single part
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PartInput"
+      responses:
+        "201":
+          description: Part added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Part"
+
+  /inventory/parts/bulk:
+    put:
+      operationId: replaceParts
+      tags: [inventory]
+      summary: Replace all parts (bulk upload)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkPartsInput"
+      responses:
+        "200":
+          description: Parts replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryState"
+
+  /inventory/parts/{id}:
+    put:
+      operationId: updatePart
+      tags: [inventory]
+      summary: Update a part
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PartInput"
+      responses:
+        "200":
+          description: Part updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Part"
+    delete:
+      operationId: deletePart
+      tags: [inventory]
+      summary: Delete a part
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Part deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /inventory/announcement:
+    put:
+      operationId: updateAnnouncement
+      tags: [inventory]
+      summary: Update announcement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnnouncementInput"
+      responses:
+        "200":
+          description: Announcement updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnnouncementInput"
+
+  /inventory/reports:
+    get:
+      operationId: getReports
+      tags: [inventory]
+      summary: Get all location reports
+      responses:
+        "200":
+          description: Reports list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LocationReport"
+    post:
+      operationId: addReport
+      tags: [inventory]
+      summary: Add a location report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportInput"
+      responses:
+        "201":
+          description: Report added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationReport"
+    delete:
+      operationId: clearReports
+      tags: [inventory]
+      summary: Clear all reports
+      responses:
+        "200":
+          description: Reports cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +192,133 @@ components:
       required:
         - status
 
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
+    Part:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        partNumber:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: string
+        location:
+          type: string
+        price:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+      required:
+        - id
+        - partNumber
+
+    PartInput:
+      type: object
+      additionalProperties: true
+      properties:
+        partNumber:
+          type: string
+        name:
+          type: string
+        quantity:
+          type: string
+        location:
+          type: string
+        price:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+      required:
+        - partNumber
+
+    BulkPartsInput:
+      type: object
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Part"
+        headers:
+          type: array
+          items:
+            type: string
+      required:
+        - parts
+        - headers
+
+    AnnouncementInput:
+      type: object
+      properties:
+        announcement:
+          type: string
+        showAnnouncement:
+          type: boolean
+      required:
+        - announcement
+        - showAnnouncement
+
+    InventoryState:
+      type: object
+      properties:
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Part"
+        headers:
+          type: array
+          items:
+            type: string
+        announcement:
+          type: string
+        showAnnouncement:
+          type: boolean
+      required:
+        - parts
+        - headers
+        - announcement
+        - showAnnouncement
+
+    LocationReport:
+      type: object
+      properties:
+        id:
+          type: integer
+        partId:
+          type: string
+        partNumber:
+          type: string
+        reportedAt:
+          type: integer
+      required:
+        - id
+        - partId
+        - partNumber
+        - reportedAt
+
+    ReportInput:
+      type: object
+      properties:
+        partId:
+          type: string
+        partNumber:
+          type: string
+        reportedAt:
+          type: integer
+      required:
+        - partId
+        - partNumber
+        - reportedAt

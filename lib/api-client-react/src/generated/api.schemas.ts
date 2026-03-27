@@ -8,3 +8,58 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface MessageResponse {
+  message: string;
+}
+
+export interface Part {
+  id: string;
+  partNumber: string;
+  name?: string;
+  quantity?: string;
+  location?: string;
+  price?: string;
+  images?: string[];
+  [key: string]: unknown;
+}
+
+export interface PartInput {
+  partNumber: string;
+  name?: string;
+  quantity?: string;
+  location?: string;
+  price?: string;
+  images?: string[];
+  [key: string]: unknown;
+}
+
+export interface BulkPartsInput {
+  parts: Part[];
+  headers: string[];
+}
+
+export interface AnnouncementInput {
+  announcement: string;
+  showAnnouncement: boolean;
+}
+
+export interface InventoryState {
+  parts: Part[];
+  headers: string[];
+  announcement: string;
+  showAnnouncement: boolean;
+}
+
+export interface LocationReport {
+  id: number;
+  partId: string;
+  partNumber: string;
+  reportedAt: number;
+}
+
+export interface ReportInput {
+  partId: string;
+  partNumber: string;
+  reportedAt: number;
+}
