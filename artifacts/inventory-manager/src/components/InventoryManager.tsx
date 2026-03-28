@@ -294,11 +294,17 @@ export default function InventoryManager() {
       toast({ title: "No data to export", description: "Please add some parts first.", variant: "destructive" });
       return;
     }
-    const exportData = parts.map(({ id, ...rest }) => ({
-      ...rest,
-      images: JSON.stringify(rest.images || [])
-    }));
-    const csv = Papa.unparse(exportData);
+    // Use the stored headers (same columns as original upload e.g. PartNo,PartName,Location)
+    const headers = csvHeaders.length > 0 ? csvHeaders : ["partNumber", "name", "location"];
+    const exportData = parts.map(part => {
+      const row: Record<string, string> = {};
+      headers.forEach(h => {
+        const val = (part as Record<string, any>)[h];
+        row[h] = val === undefined || val === null ? "" : String(val);
+      });
+      return row;
+    });
+    const csv = Papa.unparse(exportData, { columns: headers });
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -307,7 +313,7 @@ export default function InventoryManager() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast({ title: "Export Successful", description: "Inventory data downloaded as inventory_data.csv" });
+    toast({ title: "Export Successful", description: `Downloaded ${parts.length} parts as inventory_data.csv` });
   };
 
 
