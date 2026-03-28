@@ -65,7 +65,9 @@ export default function InventoryManager() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);       // Add modal
+  const imageInputEditRef = useRef<HTMLInputElement>(null);   // Edit modal
+  const bulkPhotoInputRef = useRef<HTMLInputElement>(null);   // Bulk photo upload
   const [, startTransition] = useTransition();
 
   // ─── Server data ───────────────────────────────────────────────────────────
@@ -106,6 +108,8 @@ export default function InventoryManager() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isImageGalleryOpen, setIsImageGalleryOpen] = useState(false);
   const [isMasterDashboardOpen, setIsMasterDashboardOpen] = useState(false);
+  const [isBulkPhotoOpen, setIsBulkPhotoOpen] = useState(false);
+  const [bulkPhotoProgress, setBulkPhotoProgress] = useState<{matched: number; unmatched: string[]; total: number} | null>(null);
   const [currentEditPart, setCurrentEditPart] = useState<Part | null>(null);
   const [activeImageGallery, setActiveImageGallery] = useState<{id: string, partId: string, images: string[]}>({id:'',partId:'',images:[]});
   const [galleryIndex, setGalleryIndex] = useState(0);
@@ -251,42 +255,117 @@ export default function InventoryManager() {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      // Strip BOM + whitespace from header names (Excel CSVs often have BOM)
+      transformHeader: (h) => h.replace(/^\uFEFF/, "").trim(),
       complete: (results) => {
-        if (results.data && results.data.length > 0) {
-          const headers = Object.keys(results.data[0] as object);
-          const cleanHeaders = headers.filter(h => h !== 'id' && h !== 'images');
-          const partNumKey = cleanHeaders.find(h => 
-            h.toLowerCase() === 'partnumber' || 
-            h.toLowerCase() === 'part_number' || 
-            h.toLowerCase() === 'part no' || 
-            h.toLowerCase() === 'partno'
-          ) || cleanHeaders[0];
-
-          const parsedParts: Part[] = (results.data as any[]).map((row, index) => ({
-            ...row,
-            id: crypto.randomUUID(),
-            partNumber: row[partNumKey] || `UNKNOWN-${index}`,
-            images: row.images ? (() => { try { return JSON.parse(row.images); } catch { return []; } })() : []
-          }));
-
-          bulkMutation.mutate(
-            { parts: parsedParts, headers: cleanHeaders },
-            {
-              onSuccess: () => toast({
-                title: "CSV Uploaded",
-                description: `Successfully loaded ${parsedParts.length} parts for all users.`,
-              }),
-              onError: (err) => toast({
-                title: "Upload Failed", description: String(err), variant: "destructive"
-              }),
-            }
-          );
+        if (!results.data || results.data.length === 0) {
+          toast({ title: "Empty CSV", description: "The file has no data rows.", variant: "destructive" });
+          return;
         }
+        const headers = Object.keys(results.data[0] as object);
+        const cleanHeaders = headers.filter(h => h !== 'id' && h !== 'images');
+
+        if (cleanHeaders.length === 0) {
+          toast({ title: "Invalid CSV", description: "No valid columns found. Check the file format.", variant: "destructive" });
+          return;
+        }
+
+        const partNumKey = cleanHeaders.find(h => {
+          const l = h.toLowerCase();
+          return l === 'partnumber' || l === 'part_number' || l === 'part no' || l === 'partno' || l === 'part number';
+        }) || cleanHeaders[0];
+
+        const parsedParts: Part[] = (results.data as any[]).map((row: any, index) => ({
+          ...row,
+          id: crypto.randomUUID(),
+          partNumber: String(row[partNumKey] || `UNKNOWN-${index}`).trim(),
+          name: row.name || row.PartName || row.partname || row.Name || row["Part Name"] || "",
+          location: row.location || row.Location || "",
+          quantity: row.quantity || row.Quantity || "0",
+          price: row.price || row.Price || "0",
+          images: row.images ? (() => { try { return JSON.parse(row.images); } catch { return []; } })() : [],
+        }));
+
+        bulkMutation.mutate(
+          { parts: parsedParts, headers: cleanHeaders },
+          {
+            onSuccess: () => toast({
+              title: "CSV Uploaded ✓",
+              description: `${parsedParts.length} parts loaded for all users.`,
+            }),
+            onError: (err) => toast({
+              title: "Upload Failed", description: String(err), variant: "destructive"
+            }),
+          }
+        );
       },
       error: (error) => toast({ title: "Error reading CSV", description: error.message, variant: "destructive" }),
     });
 
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // ─── Bulk photo upload (match by filename = partno.jpg) ────────────────────
+  const handleBulkPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setBulkPhotoProgress({ matched: 0, unmatched: [], total: files.length });
+
+    const readFile = (file: File): Promise<{ partNumber: string; base64: string; filename: string }> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve({
+          partNumber: file.name.replace(/\.[^/.]+$/, "").replace(/_\d+$/, "").trim(),
+          base64: reader.result as string,
+          filename: file.name,
+        });
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+    Promise.all(files.map(readFile)).then(async (fileData) => {
+      const unmatched: string[] = [];
+      let matched = 0;
+
+      // Group files by part number (multiple photos for same part)
+      const byPart = new Map<string, { part: Part; newImages: string[] }>();
+      for (const { partNumber, base64, filename } of fileData) {
+        const part = parts.find(p =>
+          (p.partNumber || "").toLowerCase() === partNumber.toLowerCase()
+        );
+        if (!part) {
+          unmatched.push(filename);
+          continue;
+        }
+        if (!byPart.has(part.id)) {
+          byPart.set(part.id, { part, newImages: [] });
+        }
+        byPart.get(part.id)!.newImages.push(base64);
+        matched++;
+      }
+
+      // Update each matched part sequentially
+      for (const { part, newImages } of byPart.values()) {
+        const updatedImages = [...(part.images || []), ...newImages];
+        await apiFetch(`/inventory/parts/${part.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...part, images: updatedImages }),
+        }).catch(() => {});
+      }
+
+      await qc.invalidateQueries({ queryKey: ["inventory"] });
+      setBulkPhotoProgress({ matched, unmatched, total: files.length });
+
+      toast({
+        title: matched > 0 ? `${matched} Photos Saved!` : "No Photos Matched",
+        description: unmatched.length > 0
+          ? `${unmatched.length} file(s) not matched: ${unmatched.slice(0, 3).join(", ")}${unmatched.length > 3 ? "..." : ""}`
+          : `All ${matched} photos added to their parts.`,
+        variant: matched > 0 ? "default" : "destructive",
+      });
+    });
+
+    if (bulkPhotoInputRef.current) bulkPhotoInputRef.current.value = "";
   };
 
   const exportToCSV = () => {
@@ -490,15 +569,27 @@ export default function InventoryManager() {
 
                 <Button 
                   variant="outline" 
-                  size="icon"
+                  size="sm"
                   onClick={() => fileInputRef.current?.click()}
-                  title="Upload CSV"
+                  title="Upload CSV file"
                   data-testid="btn-upload-csv"
-                  className="bg-white dark:bg-neutral-900 dark:border-neutral-700"
+                  className="bg-white dark:bg-neutral-900 dark:border-neutral-700 font-medium"
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-4 h-4 mr-1.5" />
+                  Upload CSV
                 </Button>
                 <input type="file" accept=".csv" ref={fileInputRef} onChange={handleFileUpload} className="hidden" />
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setBulkPhotoProgress(null); setIsBulkPhotoOpen(true); }}
+                  title="Upload photos by part number filename"
+                  className="bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/40 border-purple-200 dark:border-purple-800 font-medium"
+                >
+                  <Camera className="w-4 h-4 mr-1.5" />
+                  Photo Upload
+                </Button>
                 
                 <Button 
                   variant="outline" 
@@ -837,7 +928,7 @@ export default function InventoryManager() {
                   <Camera className="w-6 h-6 mb-1" />
                   <span className="text-[10px] uppercase font-semibold">Add</span>
                 </div>
-                <input type="file" accept="image/*" multiple ref={imageInputRef} onChange={handleImageUpload} className="hidden" />
+                <input type="file" accept="image/*" multiple capture="environment" ref={imageInputRef} onChange={handleImageUpload} className="hidden" />
               </div>
             </div>
             {csvHeaders.map((header) => (
@@ -875,11 +966,11 @@ export default function InventoryManager() {
                     </button>
                   </div>
                 ))}
-                <div onClick={() => imageInputRef.current?.click()} className="w-20 h-20 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors">
+                <div onClick={() => imageInputEditRef.current?.click()} className="w-20 h-20 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors">
                   <Camera className="w-6 h-6 mb-1" />
                   <span className="text-[10px] uppercase font-semibold">Add</span>
                 </div>
-                <input type="file" accept="image/*" multiple ref={imageInputRef} onChange={handleImageUpload} className="hidden" />
+                <input type="file" accept="image/*" multiple capture="environment" ref={imageInputEditRef} onChange={handleImageUpload} className="hidden" />
               </div>
             </div>
             {csvHeaders.map((header) => (
@@ -924,6 +1015,87 @@ export default function InventoryManager() {
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowPasswordPrompt(false); setPasswordInput(""); }} className="dark:border-neutral-700 dark:text-neutral-300">Cancel</Button>
             <Button onClick={handlePasswordSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">Login</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bulk Photo Upload Modal ── */}
+      <Dialog open={isBulkPhotoOpen} onOpenChange={setIsBulkPhotoOpen}>
+        <DialogContent className="sm:max-w-[480px] dark:bg-neutral-900 dark:border-neutral-800">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+                <Camera className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+              </div>
+              <div>
+                <DialogTitle className="dark:text-white">Photo Upload</DialogTitle>
+                <DialogDescription className="dark:text-neutral-400">
+                  Name your photos as <span className="font-mono font-semibold">PartNo.jpg</span> — they'll auto-match to parts.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Instructions */}
+            <div className="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-4 border border-purple-100 dark:border-purple-800 space-y-1.5 text-sm text-purple-800 dark:text-purple-200">
+              <p className="font-semibold">How it works:</p>
+              <p>• Name photo as <span className="font-mono">8914900694.jpg</span> → adds to part 8914900694</p>
+              <p>• Multiple photos for same part: <span className="font-mono">8914900694_1.jpg</span>, <span className="font-mono">8914900694_2.jpg</span></p>
+              <p>• Select many photos at once — all processed together</p>
+            </div>
+
+            {/* Upload button */}
+            <div
+              onClick={() => bulkPhotoInputRef.current?.click()}
+              className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-8 flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-center"
+            >
+              <div className="p-3 bg-purple-100 dark:bg-purple-900/40 rounded-full">
+                <Camera className="w-8 h-8 text-purple-500" />
+              </div>
+              <div>
+                <p className="font-semibold text-purple-700 dark:text-purple-300">Click to select photos</p>
+                <p className="text-xs text-purple-500 dark:text-purple-400 mt-0.5">From gallery or camera • Multiple files supported</p>
+              </div>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              ref={bulkPhotoInputRef}
+              onChange={handleBulkPhotoUpload}
+              className="hidden"
+            />
+
+            {/* Result summary */}
+            {bulkPhotoProgress && bulkPhotoProgress.total > 0 && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 border border-emerald-100 dark:border-emerald-800 text-center">
+                    <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{bulkPhotoProgress.matched}</p>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">Matched & Saved</p>
+                  </div>
+                  <div className={`rounded-xl p-3 border text-center ${bulkPhotoProgress.unmatched.length > 0 ? "bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800" : "bg-neutral-50 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700"}`}>
+                    <p className={`text-2xl font-bold ${bulkPhotoProgress.unmatched.length > 0 ? "text-red-700 dark:text-red-300" : "text-neutral-500"}`}>{bulkPhotoProgress.unmatched.length}</p>
+                    <p className={`text-xs font-medium ${bulkPhotoProgress.unmatched.length > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-400"}`}>Not Matched</p>
+                  </div>
+                </div>
+                {bulkPhotoProgress.unmatched.length > 0 && (
+                  <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3 border border-red-100 dark:border-red-800">
+                    <p className="text-xs font-semibold text-red-700 dark:text-red-300 mb-1">Unmatched files (part number not found):</p>
+                    <div className="flex flex-wrap gap-1">
+                      {bulkPhotoProgress.unmatched.map(f => (
+                        <span key={f} className="text-[10px] bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-0.5 rounded-full font-mono">{f}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkPhotoOpen(false)} className="dark:border-neutral-700 dark:text-neutral-300">Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
