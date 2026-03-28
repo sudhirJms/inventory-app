@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect, useMemo, useCallback, useTransition } from "react";
 import Papa from "papaparse";
-import JSZip from "jszip";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { 
   Search, Plus, Upload, Download, Trash2, Edit2, 
-  Settings, X, FileSpreadsheet, AlertCircle, Image as ImageIcon, Camera, Archive,
-  Shield, Megaphone, Users, MessageSquare, Moon, Sun, Palette, LayoutGrid, List,
+  Settings, X, FileSpreadsheet, AlertCircle, Image as ImageIcon, Camera,
+  Shield, Megaphone, Users, MessageSquare, Moon, Sun, LayoutGrid, List,
   RefreshCw, CheckCircle2
 } from "lucide-react";
 import { 
@@ -311,63 +310,6 @@ export default function InventoryManager() {
     toast({ title: "Export Successful", description: "Inventory data downloaded as inventory_data.csv" });
   };
 
-  const exportCompleteProject = async () => {
-    if (parts.length === 0) {
-      toast({ title: "No data to export", description: "Please add some parts first.", variant: "destructive" });
-      return;
-    }
-    toast({ title: "Generating Full Archive", description: "Packaging data and images..." });
-    try {
-      let zip: JSZip;
-      try {
-        const response = await fetch(`${BASE}/source-code.zip`);
-        if (response.ok) { const blob = await response.blob(); zip = await JSZip.loadAsync(blob); }
-        else zip = new JSZip();
-      } catch { zip = new JSZip(); }
-
-      const backupFolder = zip.folder("inventory_backup_data");
-      if (!backupFolder) throw new Error("Failed to create backup folder");
-
-      const exportData = parts.map(({ id, ...rest }) => ({ ...rest, hasImages: rest.images?.length || 0, images: undefined }));
-      backupFolder.file("data.csv", Papa.unparse(exportData));
-
-      const imagesFolder = backupFolder.folder("images");
-      const imageMapping: Record<string, string[]> = {};
-      if (imagesFolder) {
-        parts.forEach(part => {
-          if (part.images?.length) {
-            const partImages: string[] = [];
-            part.images.forEach((base64Data, index) => {
-              const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-              if (matches) {
-                let ext = 'jpg';
-                if (matches[1] === 'image/png') ext = 'png';
-                else if (matches[1] === 'image/webp') ext = 'webp';
-                const filename = `${part.partNumber.replace(/[^a-zA-Z0-9]/g, '_')}_${index + 1}.${ext}`;
-                imagesFolder.file(filename, matches[2], { base64: true });
-                partImages.push(`images/${filename}`);
-              }
-            });
-            imageMapping[part.partNumber] = partImages;
-          }
-        });
-        backupFolder.file("image_mapping.json", JSON.stringify(imageMapping, null, 2));
-      }
-      backupFolder.file("full_backup.json", JSON.stringify(parts, null, 2));
-
-      const content = await zip.generateAsync({ type: "blob" });
-      const url = URL.createObjectURL(content);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", `Full_Inventory_Project_${new Date().toISOString().split('T')[0]}.zip`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      toast({ title: "Export Successful", description: "Full project backup downloaded!" });
-    } catch (error) {
-      toast({ title: "Export Failed", description: "Error generating archive.", variant: "destructive" });
-    }
-  };
 
   // ─── Image handling ────────────────────────────────────────────────────────
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -554,24 +496,14 @@ export default function InventoryManager() {
                 
                 <Button 
                   variant="outline" 
-                  size="icon"
-                  onClick={exportToCSV}
-                  title="Download CSV"
-                  data-testid="btn-download-csv"
-                  className="bg-white dark:bg-neutral-900 dark:border-neutral-700"
-                >
-                  <Download className="w-4 h-4" />
-                </Button>
-  
-                <Button 
-                  variant="default" 
                   size="sm"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
-                  onClick={exportCompleteProject}
-                  title="Export Complete Backup"
+                  onClick={exportToCSV}
+                  title="Download current inventory as CSV"
+                  data-testid="btn-download-csv"
+                  className="bg-white dark:bg-neutral-900 dark:border-neutral-700 font-medium"
                 >
-                  <Archive className="w-4 h-4 sm:mr-1.5" />
-                  <span className="hidden sm:inline">Export Backup</span>
+                  <Download className="w-4 h-4 mr-1.5" />
+                  Download CSV
                 </Button>
   
                 <Button 
@@ -1104,7 +1036,7 @@ export default function InventoryManager() {
 
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1 dark:border-neutral-700 dark:text-neutral-300" onClick={exportToCSV}>
-                  <Download className="w-4 h-4 mr-2" /> Export CSV
+                  <Download className="w-4 h-4 mr-2" /> Download CSV
                 </Button>
                 <Button variant="destructive" onClick={handleClearAllData}>
                   <Trash2 className="w-4 h-4 mr-2" /> Clear All Data
