@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
+    "build:frontend": "pnpm --filter @workspace/inventory-manager run build",
+    "build:production": "pnpm run build && pnpm run build:frontend",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
