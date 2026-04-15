@@ -53,11 +53,33 @@ interface LocationReport {
   reportedAt: number;
 }
 
+interface PasswordEntry {
+  id: string;
+  label: string;
+  password: string;
+  permissions: { canSuggestLocations: boolean; canUploadPhotos: boolean };
+  createdAt: number;
+}
+
+interface PendingChange {
+  id: number;
+  type: "location" | "photo";
+  partId: string;
+  partNumber: string;
+  oldValue?: string | null;
+  newValue?: string | null;
+  photoData?: string | null;
+  photoName?: string | null;
+  submittedAt: number;
+  status: string;
+}
+
 interface InventoryState {
   parts: Part[];
   headers: string[];
   announcement: string;
   showAnnouncement: boolean;
+  devUserCount: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -91,19 +113,32 @@ export default function InventoryManager() {
 
   // ─── Local UI state ────────────────────────────────────────────────────────
   const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState(""); // only set on SEARCH click/Enter
+  const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchSuffixMode, setSearchSuffixMode] = useState(false);
   const [devMode, setDevMode] = useState(false);
   const [dismissedAnnouncement, setDismissedAnnouncement] = useState(false);
 
+  // Auth
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState("");
-  const [adminPasswords] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem("inventory_passwords") || '["AS0511"]'); }
-    catch { return ["AS0511"]; }
-  });
+  const [showResetFlow, setShowResetFlow] = useState(false);
+  const [resetMasterInput, setResetMasterInput] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetStep, setResetStep] = useState<"verify"|"set">("verify");
 
+  // Password manager
+  const [isPasswordManagerOpen, setIsPasswordManagerOpen] = useState(false);
+  const [masterInput, setMasterInput] = useState("");
+  const [masterVerified, setMasterVerified] = useState(false);
+  const [passwordsList, setPasswordsList] = useState<PasswordEntry[]>([]);
+  const [newPwLabel, setNewPwLabel] = useState("");
+  const [newPwValue, setNewPwValue] = useState("");
+  const [newPwPermissions, setNewPwPermissions] = useState({ canSuggestLocations: true, canUploadPhotos: true });
+  const [showGeneratedPw, setShowGeneratedPw] = useState<string|null>(null);
+  const [visiblePasswords, setVisiblePasswords] = useState<Set<string>>(new Set());
+
+  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isImageGalleryOpen, setIsImageGalleryOpen] = useState(false);
@@ -113,6 +148,21 @@ export default function InventoryManager() {
   const [currentEditPart, setCurrentEditPart] = useState<Part | null>(null);
   const [activeImageGallery, setActiveImageGallery] = useState<{id: string, partId: string, images: string[]}>({id:'',partId:'',images:[]});
   const [galleryIndex, setGalleryIndex] = useState(0);
+
+  // Suggest location change (non-dev)
+  const [isSuggestLocationOpen, setIsSuggestLocationOpen] = useState(false);
+  const [suggestPart, setSuggestPart] = useState<Part | null>(null);
+  const [suggestNewLocation, setSuggestNewLocation] = useState("");
+
+  // Suggest photo upload (non-dev)
+  const [isUserPhotoUploadOpen, setIsUserPhotoUploadOpen] = useState(false);
+  const [userPhotoUploadPart, setUserPhotoUploadPart] = useState<Part | null>(null);
+  const userPhotoUploadInputRef = useRef<HTMLInputElement>(null);
+  const [userPhotoPreview, setUserPhotoPreview] = useState<{base64: string; name: string} | null>(null);
+
+  // Rename photo (dev approval)
+  const [renamingPhotoId, setRenamingPhotoId] = useState<number | null>(null);
+  const [renamePhotoName, setRenamePhotoName] = useState("");
 
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [formImages, setFormImages] = useState<string[]>([]);
@@ -213,6 +263,32 @@ export default function InventoryManager() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["reports"] }),
   });
 
+  // Pending changes
+  const { data: pendingList = [], refetch: refetchPending } = useQuery<PendingChange[]>({
+    queryKey: ["pending"],
+    queryFn: () => apiFetch("/inventory/pending"),
+    staleTime: 8000,
+    refetchInterval: devMode ? 10000 : false,
+    enabled: devMode,
+  });
+
+  const submitPendingMutation = useMutation({
+    mutationFn: (data: Partial<PendingChange>) =>
+      apiFetch("/inventory/pending", { method: "POST", body: JSON.stringify(data) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pending"] }),
+  });
+
+  const approvePendingMutation = useMutation({
+    mutationFn: ({ id, approvedName }: { id: number; approvedName?: string }) =>
+      apiFetch(`/inventory/pending/${id}/approve`, { method: "POST", body: JSON.stringify({ approvedName }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["pending"] }); qc.invalidateQueries({ queryKey: ["inventory"] }); },
+  });
+
+  const rejectPendingMutation = useMutation({
+    mutationFn: (id: number) => apiFetch(`/inventory/pending/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pending"] }),
+  });
+
   // ─── Filtered parts (only computed after SEARCH click) ────────────────────
   const filteredParts = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -235,16 +311,142 @@ export default function InventoryManager() {
     else setDevMode(false);
   };
 
-  const handlePasswordSubmit = () => {
-    if (adminPasswords.includes(passwordInput) || passwordInput === "skyadavjsr45@gmail.com") {
-      setDevMode(true);
-      setShowPasswordPrompt(false);
-      setPasswordInput("");
-      toast({ title: "Developer Mode Enabled", description: "You now have admin access." });
-    } else {
-      toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
-      setPasswordInput("");
+  const handlePasswordSubmit = async () => {
+    if (!passwordInput.trim()) return;
+    try {
+      const result = await apiFetch("/inventory/passwords/check", {
+        method: "POST",
+        body: JSON.stringify({ password: passwordInput }),
+      });
+      if (result.valid) {
+        setDevMode(true);
+        setShowPasswordPrompt(false);
+        setPasswordInput("");
+        setShowResetFlow(false);
+        toast({ title: "Developer Mode Enabled", description: result.label ? `Welcome, ${result.label}!` : "You now have admin access." });
+      } else {
+        toast({ title: "Access Denied", description: "Incorrect password.", variant: "destructive" });
+        setPasswordInput("");
+      }
+    } catch {
+      toast({ title: "Error", description: "Could not verify password.", variant: "destructive" });
     }
+  };
+
+  // ─── Password reset flow ────────────────────────────────────────────────────
+  const handleResetVerify = async () => {
+    if (resetMasterInput !== "skyadavjsr45@gmail.com") {
+      toast({ title: "Wrong Master Password", variant: "destructive" });
+      return;
+    }
+    setResetStep("set");
+  };
+
+  // ─── Password manager ───────────────────────────────────────────────────────
+  const handleMasterVerify = async () => {
+    try {
+      const result = await apiFetch("/inventory/passwords/verify", {
+        method: "POST",
+        body: JSON.stringify({ masterPassword: masterInput }),
+      });
+      setPasswordsList(result.passwords);
+      setMasterVerified(true);
+    } catch {
+      toast({ title: "Invalid Master Password", variant: "destructive" });
+    }
+  };
+
+  const generatePassword = () => {
+    const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789@#!";
+    const pw = Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+    setNewPwValue(pw);
+    setShowGeneratedPw(pw);
+  };
+
+  const handleAddPassword = async () => {
+    if (!newPwValue.trim()) { toast({ title: "Enter a password", variant: "destructive" }); return; }
+    try {
+      const result = await apiFetch("/inventory/passwords", {
+        method: "POST",
+        body: JSON.stringify({ masterPassword: masterInput, label: newPwLabel || "User", password: newPwValue, permissions: newPwPermissions }),
+      });
+      setPasswordsList(prev => [...prev, result.entry]);
+      setNewPwLabel(""); setNewPwValue(""); setShowGeneratedPw(null);
+      toast({ title: "Password Added", description: `Label: ${result.entry.label}` });
+    } catch (e) {
+      toast({ title: "Failed", description: String(e), variant: "destructive" });
+    }
+  };
+
+  const handleDeletePassword = async (id: string) => {
+    if (!confirm("Delete this password?")) return;
+    try {
+      await apiFetch(`/inventory/passwords/${id}`, { method: "DELETE", body: JSON.stringify({ masterPassword: masterInput }) });
+      setPasswordsList(prev => prev.filter(p => p.id !== id));
+      toast({ title: "Deleted" });
+    } catch (e) {
+      toast({ title: "Failed", description: String(e), variant: "destructive" });
+    }
+  };
+
+  const handleResetPassword = async (id: string) => {
+    if (!resetNewPassword.trim()) { toast({ title: "Enter new password", variant: "destructive" }); return; }
+    try {
+      await apiFetch("/inventory/passwords/reset", { method: "PUT", body: JSON.stringify({ masterPassword: masterInput, id, newPassword: resetNewPassword }) });
+      setPasswordsList(prev => prev.map(p => p.id === id ? { ...p, password: resetNewPassword } : p));
+      setResetNewPassword("");
+      toast({ title: "Password Updated" });
+    } catch (e) {
+      toast({ title: "Failed", description: String(e), variant: "destructive" });
+    }
+  };
+
+  // ─── Pending change submission (non-dev) ────────────────────────────────────
+  const handleSuggestLocationSubmit = () => {
+    if (!suggestPart || !suggestNewLocation.trim()) return;
+    submitPendingMutation.mutate({
+      type: "location",
+      partId: suggestPart.id,
+      partNumber: suggestPart.partNumber,
+      oldValue: suggestPart.location || String((suggestPart as any).Location || ""),
+      newValue: suggestNewLocation.trim(),
+    }, {
+      onSuccess: () => {
+        setIsSuggestLocationOpen(false);
+        setSuggestNewLocation("");
+        setSuggestPart(null);
+        toast({ title: "Suggestion Sent", description: "Admin will review your location change." });
+      },
+      onError: (e) => toast({ title: "Failed", description: String(e), variant: "destructive" }),
+    });
+  };
+
+  const handleUserPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => setUserPhotoPreview({ base64: reader.result as string, name: file.name });
+    reader.readAsDataURL(file);
+    if (userPhotoUploadInputRef.current) userPhotoUploadInputRef.current.value = "";
+  };
+
+  const handleUserPhotoSubmit = () => {
+    if (!userPhotoUploadPart || !userPhotoPreview) return;
+    submitPendingMutation.mutate({
+      type: "photo",
+      partId: userPhotoUploadPart.id,
+      partNumber: userPhotoUploadPart.partNumber,
+      photoData: userPhotoPreview.base64,
+      photoName: userPhotoPreview.name,
+    }, {
+      onSuccess: () => {
+        setIsUserPhotoUploadOpen(false);
+        setUserPhotoPreview(null);
+        setUserPhotoUploadPart(null);
+        toast({ title: "Photo Submitted", description: "Admin will review and approve your photo." });
+      },
+      onError: (e) => toast({ title: "Failed", description: String(e), variant: "destructive" }),
+    });
   };
 
   // ─── File upload ───────────────────────────────────────────────────────────
@@ -816,25 +1018,24 @@ export default function InventoryManager() {
                         </Button>
                       </div>
                     ) : (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="text-xs text-orange-600 dark:text-orange-400 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-900/30 h-8 rounded-lg shrink-0"
-                        onClick={() => {
-                          const alreadyReported = reports.some(r => r.partId === part.id);
-                          if (alreadyReported) {
-                            toast({ title: "Already Reported", description: "This part's location has already been reported." });
-                            return;
-                          }
-                          addReportMutation.mutate(
-                            { partId: part.id, partNumber: part.partNumber, reportedAt: Date.now() },
-                            { onSuccess: () => toast({ title: "Report Submitted", description: "Admin has been notified." }) }
-                          );
-                        }}
-                      >
-                        <AlertCircle className="w-3 h-3 mr-1" />
-                        Report Wrong Location
-                      </Button>
+                      <div className="flex flex-col gap-1 shrink-0 items-end">
+                        <Button 
+                          variant="ghost" size="sm"
+                          className="text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 h-7 rounded-lg px-2"
+                          onClick={() => { setSuggestPart(part); setSuggestNewLocation(part.location || String((part as any).Location || "")); setIsSuggestLocationOpen(true); }}
+                        >
+                          <Edit2 className="w-3 h-3 mr-1" />
+                          Suggest Location
+                        </Button>
+                        <Button 
+                          variant="ghost" size="sm"
+                          className="text-xs text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/30 h-7 rounded-lg px-2"
+                          onClick={() => { setUserPhotoUploadPart(part); setUserPhotoPreview(null); setIsUserPhotoUploadOpen(true); }}
+                        >
+                          <Camera className="w-3 h-3 mr-1" />
+                          Add Photo
+                        </Button>
+                      </div>
                     )}
                   </div>
 
@@ -990,32 +1191,78 @@ export default function InventoryManager() {
       </Dialog>
 
       {/* ── Password Prompt ── */}
-      <Dialog open={showPasswordPrompt} onOpenChange={(open) => { if (!open) { setShowPasswordPrompt(false); setPasswordInput(""); } }}>
-        <DialogContent className="sm:max-w-[380px] dark:bg-neutral-900 dark:border-neutral-800">
+      <Dialog open={showPasswordPrompt} onOpenChange={(open) => { if (!open) { setShowPasswordPrompt(false); setPasswordInput(""); setShowResetFlow(false); setResetStep("verify"); setResetMasterInput(""); setResetNewPassword(""); } }}>
+        <DialogContent className="sm:max-w-[400px] dark:bg-neutral-900 dark:border-neutral-800">
           <DialogHeader>
             <div className="flex items-center gap-3 mb-1">
               <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
                 <Shield className="w-5 h-5 text-amber-600 dark:text-amber-400" />
               </div>
-              <DialogTitle className="dark:text-white">Admin Access Required</DialogTitle>
+              <div>
+                <DialogTitle className="dark:text-white">{showResetFlow ? "Reset Password" : "Admin Access Required"}</DialogTitle>
+                <DialogDescription className="dark:text-neutral-400 text-xs">
+                  {showResetFlow ? "Master password required to reset" : "Enter your developer password"}
+                </DialogDescription>
+              </div>
             </div>
-            <DialogDescription className="dark:text-neutral-400">Enter the administrator password to enable Dev Mode.</DialogDescription>
           </DialogHeader>
-          <div className="py-4">
-            <Input
-              type="password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handlePasswordSubmit(); }}
-              placeholder="Enter password..."
-              className="dark:bg-neutral-800 dark:border-neutral-700"
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowPasswordPrompt(false); setPasswordInput(""); }} className="dark:border-neutral-700 dark:text-neutral-300">Cancel</Button>
-            <Button onClick={handlePasswordSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">Login</Button>
-          </DialogFooter>
+
+          {!showResetFlow ? (
+            <>
+              <div className="py-3 space-y-3">
+                <Input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handlePasswordSubmit(); }}
+                  placeholder="Enter password..."
+                  className="dark:bg-neutral-800 dark:border-neutral-700"
+                  autoFocus
+                />
+                <button
+                  onClick={() => { setShowResetFlow(true); setResetStep("verify"); }}
+                  className="text-xs text-amber-600 dark:text-amber-400 hover:underline w-full text-right"
+                >
+                  Forgot / Reset Password?
+                </button>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowPasswordPrompt(false); setPasswordInput(""); }} className="dark:border-neutral-700 dark:text-neutral-300">Cancel</Button>
+                <Button onClick={handlePasswordSubmit} className="bg-amber-600 hover:bg-amber-700 text-white">Login</Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <div className="py-3 space-y-3">
+              {resetStep === "verify" ? (
+                <>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">Enter master password to continue:</p>
+                  <Input
+                    type="password"
+                    value={resetMasterInput}
+                    onChange={(e) => setResetMasterInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleResetVerify(); }}
+                    placeholder="Master password (gmail)..."
+                    className="dark:bg-neutral-800 dark:border-neutral-700"
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1 dark:border-neutral-700" onClick={() => setShowResetFlow(false)}>Back</Button>
+                    <Button className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={handleResetVerify}>Verify</Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">To set a new main dev password, go to <strong>Dashboard → Passwords</strong> after logging in.</p>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400">Or login directly with master password:</p>
+                  <Button className="w-full bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
+                    setPasswordInput(resetMasterInput);
+                    setShowResetFlow(false);
+                    setTimeout(() => handlePasswordSubmit(), 50);
+                  }}>Login with Master Password</Button>
+                </>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1157,11 +1404,13 @@ export default function InventoryManager() {
           </DialogHeader>
 
           {/* Dashboard Tabs */}
-          <div className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-xl p-1 mt-2">
+          <div className="flex gap-1 bg-neutral-100 dark:bg-neutral-800 rounded-xl p-1 mt-2 flex-wrap">
             {[
               { id: "overview", label: "Overview", icon: LayoutGrid },
-              { id: "announcement", label: "Announcement", icon: Megaphone },
-              { id: "reports", label: "Reports", icon: AlertCircle },
+              { id: "pending", label: "Pending", icon: RefreshCw, badge: pendingList.length },
+              { id: "passwords", label: "Passwords", icon: Shield },
+              { id: "announcement", label: "Announce", icon: Megaphone },
+              { id: "reports", label: "Reports", icon: AlertCircle, badge: reports.length },
             ].map(tab => (
               <button
                 key={tab.id}
@@ -1174,8 +1423,8 @@ export default function InventoryManager() {
               >
                 <tab.icon className="w-3.5 h-3.5" />
                 {tab.label}
-                {tab.id === "reports" && reports.length > 0 && (
-                  <Badge variant="destructive" className="text-[10px] h-4 min-w-4 px-1">{reports.length}</Badge>
+                {(tab as any).badge > 0 && (
+                  <Badge variant="destructive" className="text-[10px] h-4 min-w-4 px-1">{(tab as any).badge}</Badge>
                 )}
               </button>
             ))}
@@ -1220,6 +1469,170 @@ export default function InventoryManager() {
                   <Trash2 className="w-4 h-4 mr-2" /> Clear All Data
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Pending Tab */}
+          {activeDashboardTab === "pending" && (
+            <div className="space-y-3 mt-4">
+              {pendingList.length === 0 ? (
+                <div className="p-8 text-center text-neutral-500 dark:text-neutral-400">
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
+                  <p className="font-medium">No pending changes</p>
+                  <p className="text-sm mt-1">All suggestions have been reviewed.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingList.map((pc) => (
+                    <div key={pc.id} className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge className="text-[10px] h-4 capitalize" variant={pc.type === "photo" ? "secondary" : "outline"}>
+                              {pc.type === "photo" ? "📷 Photo" : "📍 Location"}
+                            </Badge>
+                            <span className="font-mono text-sm font-semibold dark:text-neutral-200">{pc.partNumber}</span>
+                          </div>
+                          {pc.type === "location" && (
+                            <div className="text-xs text-neutral-600 dark:text-neutral-400 space-y-0.5">
+                              <p>Old: <span className="font-mono line-through text-red-500">{pc.oldValue}</span></p>
+                              <p>New: <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{pc.newValue}</span></p>
+                            </div>
+                          )}
+                          {pc.type === "photo" && pc.photoData && (
+                            <div className="mt-2 space-y-2">
+                              <img src={pc.photoData} alt="pending" className="w-24 h-24 object-cover rounded-lg border border-amber-200 dark:border-amber-700" />
+                              <div className="flex items-center gap-2">
+                                {renamingPhotoId === pc.id ? (
+                                  <>
+                                    <Input
+                                      value={renamePhotoName}
+                                      onChange={(e) => setRenamePhotoName(e.target.value)}
+                                      placeholder="New filename..."
+                                      className="text-xs h-7 dark:bg-neutral-800 dark:border-neutral-700"
+                                    />
+                                    <Button size="sm" className="h-7 text-xs" onClick={() => { setRenamingPhotoId(null); }}>Save</Button>
+                                  </>
+                                ) : (
+                                  <button
+                                    className="text-xs text-blue-500 hover:underline"
+                                    onClick={() => { setRenamingPhotoId(pc.id); setRenamePhotoName(pc.photoName || "photo.jpg"); }}
+                                  >
+                                    Rename: {pc.photoName || "photo.jpg"}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm" className="flex-1 h-8 bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                          onClick={() => approvePendingMutation.mutate({ id: pc.id, approvedName: renamingPhotoId === pc.id ? renamePhotoName : undefined })}
+                          disabled={approvePendingMutation.isPending}
+                        >
+                          <CheckCircle2 className="w-3 h-3 mr-1" /> Approve
+                        </Button>
+                        <Button
+                          size="sm" variant="outline" className="flex-1 h-8 text-red-500 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 text-xs"
+                          onClick={() => rejectPendingMutation.mutate(pc.id)}
+                          disabled={rejectPendingMutation.isPending}
+                        >
+                          <X className="w-3 h-3 mr-1" /> Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Passwords Tab */}
+          {activeDashboardTab === "passwords" && (
+            <div className="space-y-4 mt-4">
+              {!masterVerified ? (
+                <div className="space-y-3 p-4 bg-neutral-50 dark:bg-neutral-800 rounded-xl border border-neutral-200 dark:border-neutral-700">
+                  <p className="text-sm font-medium dark:text-neutral-300">Enter master password to manage access:</p>
+                  <Input
+                    type="password"
+                    value={masterInput}
+                    onChange={(e) => setMasterInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleMasterVerify(); }}
+                    placeholder="Master password (gmail)..."
+                    className="dark:bg-neutral-900 dark:border-neutral-700"
+                  />
+                  <Button className="w-full" onClick={handleMasterVerify}>Unlock Password Manager</Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Existing passwords list */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold uppercase text-neutral-500 dark:text-neutral-400 tracking-wider">Active Passwords ({passwordsList.length})</p>
+                    {passwordsList.length === 0 ? (
+                      <p className="text-sm text-neutral-400 italic">No sub-passwords added yet.</p>
+                    ) : (
+                      passwordsList.map((pw) => (
+                        <div key={pw.id} className="flex items-center gap-2 p-3 bg-neutral-50 dark:bg-neutral-800 rounded-xl border border-neutral-200 dark:border-neutral-700">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold dark:text-neutral-200">{pw.label}</p>
+                            <p className="font-mono text-xs text-neutral-500 dark:text-neutral-400">
+                              {pw.password.substring(0, 3)}{'*'.repeat(pw.password.length - 3)}
+                            </p>
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {pw.permissions?.canSuggestLocations && <Badge className="text-[9px] h-4 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">Locations</Badge>}
+                              {pw.permissions?.canUploadPhotos && <Badge className="text-[9px] h-4 bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">Photos</Badge>}
+                            </div>
+                          </div>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30" onClick={() => handleDeletePassword(pw.id)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Add new password */}
+                  <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-800 space-y-3">
+                    <p className="text-xs font-semibold uppercase text-emerald-700 dark:text-emerald-400 tracking-wider">Add New Password</p>
+                    <Input
+                      value={newPwLabel}
+                      onChange={(e) => setNewPwLabel(e.target.value)}
+                      placeholder="Label (e.g. Warehouse Team)..."
+                      className="dark:bg-neutral-900 dark:border-neutral-700 text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={newPwValue}
+                        onChange={(e) => { setNewPwValue(e.target.value); setShowGeneratedPw(null); }}
+                        placeholder="Password..."
+                        className="dark:bg-neutral-900 dark:border-neutral-700 text-sm flex-1"
+                      />
+                      <Button variant="outline" size="sm" className="text-xs dark:border-neutral-700" onClick={generatePassword}>
+                        Auto
+                      </Button>
+                    </div>
+                    {showGeneratedPw && (
+                      <div className="flex items-center gap-2 p-2 bg-white dark:bg-neutral-900 rounded-lg border border-emerald-200 dark:border-emerald-700">
+                        <span className="font-mono text-sm text-emerald-700 dark:text-emerald-300 flex-1 select-all">{showGeneratedPw}</span>
+                        <button onClick={() => { navigator.clipboard.writeText(showGeneratedPw); toast({ title: "Copied!" }); }} className="text-xs text-emerald-600 hover:underline">Copy</button>
+                      </div>
+                    )}
+                    <div className="flex gap-4 text-sm">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={newPwPermissions.canSuggestLocations} onChange={(e) => setNewPwPermissions(p => ({ ...p, canSuggestLocations: e.target.checked }))} className="rounded" />
+                        <span className="dark:text-neutral-300">Suggest Locations</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={newPwPermissions.canUploadPhotos} onChange={(e) => setNewPwPermissions(p => ({ ...p, canUploadPhotos: e.target.checked }))} className="rounded" />
+                        <span className="dark:text-neutral-300">Upload Photos</span>
+                      </label>
+                    </div>
+                    <Button className="w-full" onClick={handleAddPassword}>Add Password</Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1339,6 +1752,91 @@ export default function InventoryManager() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Suggest Location Modal ── */}
+      <Dialog open={isSuggestLocationOpen} onOpenChange={(open) => { if (!open) { setIsSuggestLocationOpen(false); setSuggestPart(null); setSuggestNewLocation(""); } }}>
+        <DialogContent className="sm:max-w-[380px] dark:bg-neutral-900 dark:border-neutral-800">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                <Edit2 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div>
+                <DialogTitle className="dark:text-white">Suggest Location Change</DialogTitle>
+                <DialogDescription className="dark:text-neutral-400 text-xs">Part: <span className="font-mono font-semibold">{suggestPart?.partNumber}</span></DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="py-3 space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs dark:text-neutral-400">New Location</Label>
+              <Input
+                value={suggestNewLocation}
+                onChange={(e) => setSuggestNewLocation(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSuggestLocationSubmit(); }}
+                placeholder="e.g. Shelf B-3..."
+                className="dark:bg-neutral-800 dark:border-neutral-700"
+                autoFocus
+              />
+            </div>
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-800 p-2 rounded-lg">
+              Your suggestion will be reviewed by an admin before being applied.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSuggestLocationOpen(false)} className="dark:border-neutral-700">Cancel</Button>
+            <Button onClick={handleSuggestLocationSubmit} disabled={submitPendingMutation.isPending} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {submitPendingMutation.isPending ? "Sending..." : "Submit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── User Photo Upload Modal ── */}
+      <Dialog open={isUserPhotoUploadOpen} onOpenChange={(open) => { if (!open) { setIsUserPhotoUploadOpen(false); setUserPhotoUploadPart(null); setUserPhotoPreview(null); } }}>
+        <DialogContent className="sm:max-w-[380px] dark:bg-neutral-900 dark:border-neutral-800">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
+                <Camera className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+              </div>
+              <div>
+                <DialogTitle className="dark:text-white">Submit Photo</DialogTitle>
+                <DialogDescription className="dark:text-neutral-400 text-xs">Part: <span className="font-mono font-semibold">{userPhotoUploadPart?.partNumber}</span></DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="py-3 space-y-3">
+            {userPhotoPreview ? (
+              <div className="relative w-full h-48 rounded-xl overflow-hidden border border-purple-200 dark:border-purple-700">
+                <img src={userPhotoPreview.base64} alt="preview" className="w-full h-full object-cover" />
+                <button onClick={() => setUserPhotoPreview(null)} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full text-white hover:bg-red-500 transition-colors">
+                  <X className="w-3 h-3" />
+                </button>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-2 truncate">{userPhotoPreview.name}</div>
+              </div>
+            ) : (
+              <div
+                onClick={() => userPhotoUploadInputRef.current?.click()}
+                className="w-full h-36 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-purple-500"
+              >
+                <Camera className="w-8 h-8 mb-2" />
+                <p className="text-sm font-medium">Tap to select photo</p>
+              </div>
+            )}
+            <input type="file" accept="image/*" capture="environment" ref={userPhotoUploadInputRef} onChange={handleUserPhotoSelect} className="hidden" />
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-800 p-2 rounded-lg">
+              Photo will be reviewed by an admin before appearing on the part.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsUserPhotoUploadOpen(false)} className="dark:border-neutral-700">Cancel</Button>
+            <Button onClick={handleUserPhotoSubmit} disabled={!userPhotoPreview || submitPendingMutation.isPending} className="bg-purple-600 hover:bg-purple-700 text-white">
+              {submitPendingMutation.isPending ? "Sending..." : "Submit Photo"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
