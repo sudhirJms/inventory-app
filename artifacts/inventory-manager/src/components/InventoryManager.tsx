@@ -5,8 +5,9 @@ import {
   Search, Plus, Upload, Download, Trash2, Edit2, 
   Settings, X, FileSpreadsheet, AlertCircle, Image as ImageIcon, Camera,
   Shield, Megaphone, Users, MessageSquare, Moon, Sun, LayoutGrid, List,
-  RefreshCw, CheckCircle2
+  RefreshCw, CheckCircle2, Crop, FolderOpen
 } from "lucide-react";
+import { CropImageModal } from "./CropImageModal";
 import { 
   Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter 
 } from "@/components/ui/card";
@@ -63,7 +64,7 @@ interface PasswordEntry {
 
 interface PendingChange {
   id: number;
-  type: "location" | "photo";
+  type: "location" | "photo" | "add_part";
   partId: string;
   partNumber: string;
   oldValue?: string | null;
@@ -87,17 +88,20 @@ export default function InventoryManager() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);       // Add modal
-  const imageInputEditRef = useRef<HTMLInputElement>(null);   // Edit modal
-  const bulkPhotoInputRef = useRef<HTMLInputElement>(null);   // Bulk photo upload
+  const imageInputRef = useRef<HTMLInputElement>(null);         // Add modal - gallery
+  const imageCameraRef = useRef<HTMLInputElement>(null);        // Add modal - camera
+  const imageInputEditRef = useRef<HTMLInputElement>(null);     // Edit modal - gallery
+  const imageCameraEditRef = useRef<HTMLInputElement>(null);    // Edit modal - camera
+  const bulkPhotoInputRef = useRef<HTMLInputElement>(null);     // Bulk photo upload
   const [, startTransition] = useTransition();
 
   // ─── Server data ───────────────────────────────────────────────────────────
   const { data: inv, isLoading } = useQuery<InventoryState>({
     queryKey: ["inventory"],
     queryFn: () => apiFetch("/inventory"),
-    staleTime: 5000,
-    refetchInterval: 15000,
+    staleTime: 0,
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: reports = [], refetch: refetchReports } = useQuery<LocationReport[]>({
@@ -157,12 +161,24 @@ export default function InventoryManager() {
   // Suggest photo upload (non-dev)
   const [isUserPhotoUploadOpen, setIsUserPhotoUploadOpen] = useState(false);
   const [userPhotoUploadPart, setUserPhotoUploadPart] = useState<Part | null>(null);
-  const userPhotoUploadInputRef = useRef<HTMLInputElement>(null);
+  const userPhotoUploadInputRef = useRef<HTMLInputElement>(null); // camera
+  const userPhotoGalleryRef = useRef<HTMLInputElement>(null);     // gallery
   const [userPhotoPreview, setUserPhotoPreview] = useState<{base64: string; name: string} | null>(null);
 
   // Rename photo (dev approval)
   const [renamingPhotoId, setRenamingPhotoId] = useState<number | null>(null);
   const [renamePhotoName, setRenamePhotoName] = useState("");
+
+  // Crop modal
+  const [cropSource, setCropSource] = useState<string | null>(null);
+  const [cropFor, setCropFor] = useState<"form" | "userUpload" | "suggestPart">("form");
+
+  // Suggest New Part (public)
+  const [isSuggestNewPartOpen, setIsSuggestNewPartOpen] = useState(false);
+  const [suggestPartForm, setSuggestPartForm] = useState<Record<string, string>>({});
+  const [suggestPartImages, setSuggestPartImages] = useState<string[]>([]);
+  const suggestPartImageRef = useRef<HTMLInputElement>(null);
+  const suggestPartCameraRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [formImages, setFormImages] = useState<string[]>([]);
@@ -421,15 +437,6 @@ export default function InventoryManager() {
     });
   };
 
-  const handleUserPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => setUserPhotoPreview({ base64: reader.result as string, name: file.name });
-    reader.readAsDataURL(file);
-    if (userPhotoUploadInputRef.current) userPhotoUploadInputRef.current.value = "";
-  };
-
   const handleUserPhotoSubmit = () => {
     if (!userPhotoUploadPart || !userPhotoPreview) return;
     submitPendingMutation.mutate({
@@ -444,6 +451,30 @@ export default function InventoryManager() {
         setUserPhotoPreview(null);
         setUserPhotoUploadPart(null);
         toast({ title: "Photo Submitted", description: "Admin will review and approve your photo." });
+      },
+      onError: (e) => toast({ title: "Failed", description: String(e), variant: "destructive" }),
+    });
+  };
+
+  const handleSuggestNewPartSubmit = () => {
+    const firstKey = Object.keys(suggestPartForm)[0] || "partNumber";
+    const partNum = suggestPartForm.partNumber || suggestPartForm[firstKey] || "";
+    if (!partNum.trim()) {
+      toast({ title: "Part number required", variant: "destructive" });
+      return;
+    }
+    const partData = { ...suggestPartForm, images: suggestPartImages };
+    submitPendingMutation.mutate({
+      type: "add_part",
+      partId: "",
+      partNumber: partNum,
+      newValue: JSON.stringify(partData),
+    }, {
+      onSuccess: () => {
+        setIsSuggestNewPartOpen(false);
+        setSuggestPartForm({});
+        setSuggestPartImages([]);
+        toast({ title: "Suggestion Sent!", description: "Admin will review and add this part." });
       },
       onError: (e) => toast({ title: "Failed", description: String(e), variant: "destructive" }),
     });
@@ -599,15 +630,43 @@ export default function InventoryManager() {
 
 
   // ─── Image handling ────────────────────────────────────────────────────────
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const pickImageForCrop = (e: React.ChangeEvent<HTMLInputElement>, target: "form" | "userUpload" | "suggestPart" = "form") => {
     const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach(file => {
+    if (!files || files.length === 0) return;
+    (e.target as HTMLInputElement).value = "";
+    if (files.length === 1) {
       const reader = new FileReader();
-      reader.onloadend = () => setFormImages(prev => [...prev, reader.result as string]);
-      reader.readAsDataURL(file);
-    });
-    if (imageInputRef.current) imageInputRef.current.value = "";
+      reader.onloadend = () => {
+        setCropFor(target);
+        setCropSource(reader.result as string);
+      };
+      reader.readAsDataURL(files[0]);
+    } else {
+      // Multiple files: add without crop
+      Array.from(files).forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (target === "form") setFormImages(prev => [...prev, reader.result as string]);
+          else if (target === "suggestPart") setSuggestPartImages(prev => [...prev, reader.result as string]);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleCropConfirm = (croppedDataUrl: string) => {
+    if (cropFor === "form") {
+      setFormImages(prev => [...prev, croppedDataUrl]);
+    } else if (cropFor === "userUpload") {
+      setUserPhotoPreview({ base64: croppedDataUrl, name: "photo.jpg" });
+    } else if (cropFor === "suggestPart") {
+      setSuggestPartImages(prev => [...prev, croppedDataUrl]);
+    }
+    setCropSource(null);
+  };
+
+  const handleUserPhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    pickImageForCrop(e, "userUpload");
   };
 
   const removeFormImage = (index: number) => setFormImages(prev => prev.filter((_, i) => i !== index));
@@ -815,6 +874,19 @@ export default function InventoryManager() {
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
+            )}
+
+            {/* Non-dev quick actions */}
+            {!devMode && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setSuggestPartForm(Object.fromEntries(csvHeaders.map(h => [h, ""]))); setSuggestPartImages([]); setIsSuggestNewPartOpen(true); }}
+                className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800 font-medium"
+              >
+                <Plus className="w-4 h-4 mr-1.5" />
+                Suggest New Part
+              </Button>
             )}
           </div>
         </div>
@@ -1125,11 +1197,18 @@ export default function InventoryManager() {
                     </button>
                   </div>
                 ))}
-                <div onClick={() => imageInputRef.current?.click()} className="w-20 h-20 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors">
-                  <Camera className="w-6 h-6 mb-1" />
-                  <span className="text-[10px] uppercase font-semibold">Add</span>
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <div onClick={() => imageCameraRef.current?.click()} className="w-20 h-9 rounded-lg border-2 border-dashed border-blue-300 dark:border-blue-700 flex items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500 transition-colors gap-1.5">
+                    <Camera className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">Camera</span>
+                  </div>
+                  <div onClick={() => imageInputRef.current?.click()} className="w-20 h-9 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex items-center justify-center cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors gap-1.5">
+                    <FolderOpen className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">Gallery</span>
+                  </div>
                 </div>
-                <input type="file" accept="image/*" multiple capture="environment" ref={imageInputRef} onChange={handleImageUpload} className="hidden" />
+                <input type="file" accept="image/*" capture="environment" ref={imageCameraRef} onChange={(e) => pickImageForCrop(e, "form")} className="hidden" />
+                <input type="file" accept="image/*" multiple ref={imageInputRef} onChange={(e) => pickImageForCrop(e, "form")} className="hidden" />
               </div>
             </div>
             {csvHeaders.map((header) => (
@@ -1167,11 +1246,18 @@ export default function InventoryManager() {
                     </button>
                   </div>
                 ))}
-                <div onClick={() => imageInputEditRef.current?.click()} className="w-20 h-20 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col items-center justify-center shrink-0 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors">
-                  <Camera className="w-6 h-6 mb-1" />
-                  <span className="text-[10px] uppercase font-semibold">Add</span>
+                <div className="flex flex-col gap-1.5 shrink-0">
+                  <div onClick={() => imageCameraEditRef.current?.click()} className="w-20 h-9 rounded-lg border-2 border-dashed border-blue-300 dark:border-blue-700 flex items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500 transition-colors gap-1.5">
+                    <Camera className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">Camera</span>
+                  </div>
+                  <div onClick={() => imageInputEditRef.current?.click()} className="w-20 h-9 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex items-center justify-center cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500 transition-colors gap-1.5">
+                    <FolderOpen className="w-4 h-4" />
+                    <span className="text-[10px] font-semibold">Gallery</span>
+                  </div>
                 </div>
-                <input type="file" accept="image/*" multiple capture="environment" ref={imageInputEditRef} onChange={handleImageUpload} className="hidden" />
+                <input type="file" accept="image/*" capture="environment" ref={imageCameraEditRef} onChange={(e) => pickImageForCrop(e, "form")} className="hidden" />
+                <input type="file" accept="image/*" multiple ref={imageInputEditRef} onChange={(e) => pickImageForCrop(e, "form")} className="hidden" />
               </div>
             </div>
             {csvHeaders.map((header) => (
@@ -1488,8 +1574,8 @@ export default function InventoryManager() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <Badge className="text-[10px] h-4 capitalize" variant={pc.type === "photo" ? "secondary" : "outline"}>
-                              {pc.type === "photo" ? "📷 Photo" : "📍 Location"}
+                            <Badge className="text-[10px] h-4 capitalize" variant={pc.type === "photo" ? "secondary" : pc.type === "add_part" ? "default" : "outline"}>
+                              {pc.type === "photo" ? "📷 Photo" : pc.type === "add_part" ? "➕ New Part" : "📍 Location"}
                             </Badge>
                             <span className="font-mono text-sm font-semibold dark:text-neutral-200">{pc.partNumber}</span>
                           </div>
@@ -1499,6 +1585,19 @@ export default function InventoryManager() {
                               <p>New: <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{pc.newValue}</span></p>
                             </div>
                           )}
+                          {pc.type === "add_part" && pc.newValue && (() => {
+                            try {
+                              const d = JSON.parse(pc.newValue);
+                              return (
+                                <div className="text-xs text-neutral-600 dark:text-neutral-400 space-y-0.5 mt-1">
+                                  {Object.entries(d).filter(([k]) => k !== "images").slice(0, 5).map(([k, v]) => (
+                                    <p key={k}><span className="text-neutral-400 capitalize">{k}:</span> <span className="font-mono">{String(v)}</span></p>
+                                  ))}
+                                  {d.images?.length > 0 && <p className="text-purple-500">{d.images.length} photo(s) attached</p>}
+                                </div>
+                              );
+                            } catch { return null; }
+                          })()}
                           {pc.type === "photo" && pc.photoData && (
                             <div className="mt-2 space-y-2">
                               <img src={pc.photoData} alt="pending" className="w-24 h-24 object-cover rounded-lg border border-amber-200 dark:border-amber-700" />
@@ -1755,6 +1854,70 @@ export default function InventoryManager() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Suggest New Part Modal ── */}
+      <Dialog open={isSuggestNewPartOpen} onOpenChange={(open) => { if (!open) { setIsSuggestNewPartOpen(false); setSuggestPartForm({}); setSuggestPartImages([]); } }}>
+        <DialogContent className="sm:max-w-[500px] max-h-[85vh] overflow-y-auto dark:bg-neutral-900 dark:border-neutral-800">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-1">
+              <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg">
+                <Plus className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <DialogTitle className="dark:text-white">Suggest New Part</DialogTitle>
+                <DialogDescription className="dark:text-neutral-400 text-xs">Your suggestion will be reviewed by an admin.</DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="grid gap-4 py-3">
+            {/* Photos */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium dark:text-neutral-300">Photos (optional)</Label>
+              <div className="flex gap-2 overflow-x-auto pb-1 flex-wrap">
+                {suggestPartImages.map((img, i) => (
+                  <div key={i} className="relative w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-neutral-200 dark:border-neutral-700">
+                    <img src={img} alt="preview" className="w-full h-full object-cover" />
+                    <button onClick={() => setSuggestPartImages(prev => prev.filter((_, j) => j !== i))} className="absolute top-0.5 right-0.5 bg-black/60 p-0.5 rounded-full text-white hover:bg-red-500">
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                ))}
+                <div className="flex gap-1.5">
+                  <div onClick={() => suggestPartCameraRef.current?.click()} className="w-16 h-16 rounded-lg border-2 border-dashed border-blue-300 dark:border-blue-700 flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-500">
+                    <Camera className="w-5 h-5 mb-0.5" />
+                    <span className="text-[9px] font-semibold">Camera</span>
+                  </div>
+                  <div onClick={() => suggestPartImageRef.current?.click()} className="w-16 h-16 rounded-lg border-2 border-dashed border-neutral-300 dark:border-neutral-600 flex flex-col items-center justify-center cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800 text-neutral-500">
+                    <FolderOpen className="w-5 h-5 mb-0.5" />
+                    <span className="text-[9px] font-semibold">Gallery</span>
+                  </div>
+                </div>
+                <input type="file" accept="image/*" capture="environment" ref={suggestPartCameraRef} onChange={(e) => pickImageForCrop(e, "suggestPart")} className="hidden" />
+                <input type="file" accept="image/*" multiple ref={suggestPartImageRef} onChange={(e) => pickImageForCrop(e, "suggestPart")} className="hidden" />
+              </div>
+            </div>
+            {/* Part fields */}
+            {csvHeaders.map((header) => (
+              <div key={header} className="grid gap-1.5">
+                <Label htmlFor={`suggest-${header}`} className="capitalize text-sm dark:text-neutral-300">{header}</Label>
+                <Input
+                  id={`suggest-${header}`}
+                  value={suggestPartForm[header] || ""}
+                  onChange={(e) => setSuggestPartForm(prev => ({ ...prev, [header]: e.target.value }))}
+                  placeholder={`Enter ${header}...`}
+                  className="dark:bg-neutral-800 dark:border-neutral-700"
+                />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsSuggestNewPartOpen(false)} className="dark:border-neutral-700">Cancel</Button>
+            <Button onClick={handleSuggestNewPartSubmit} disabled={submitPendingMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+              {submitPendingMutation.isPending ? "Sending..." : "Submit Suggestion"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Suggest Location Modal ── */}
       <Dialog open={isSuggestLocationOpen} onOpenChange={(open) => { if (!open) { setIsSuggestLocationOpen(false); setSuggestPart(null); setSuggestNewLocation(""); } }}>
         <DialogContent className="sm:max-w-[380px] dark:bg-neutral-900 dark:border-neutral-800">
@@ -1815,18 +1978,30 @@ export default function InventoryManager() {
                 <button onClick={() => setUserPhotoPreview(null)} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full text-white hover:bg-red-500 transition-colors">
                   <X className="w-3 h-3" />
                 </button>
-                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-2 truncate">{userPhotoPreview.name}</div>
+                <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs p-2 flex items-center gap-1">
+                  <Crop className="w-3 h-3" /> Cropped photo ready
+                </div>
               </div>
             ) : (
-              <div
-                onClick={() => userPhotoUploadInputRef.current?.click()}
-                className="w-full h-36 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-purple-500"
-              >
-                <Camera className="w-8 h-8 mb-2" />
-                <p className="text-sm font-medium">Tap to select photo</p>
+              <div className="flex gap-3">
+                <div
+                  onClick={() => userPhotoUploadInputRef.current?.click()}
+                  className="flex-1 h-24 border-2 border-dashed border-blue-300 dark:border-blue-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors text-blue-500"
+                >
+                  <Camera className="w-6 h-6 mb-1" />
+                  <p className="text-xs font-medium">Camera</p>
+                </div>
+                <div
+                  onClick={() => userPhotoGalleryRef.current?.click()}
+                  className="flex-1 h-24 border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors text-purple-500"
+                >
+                  <FolderOpen className="w-6 h-6 mb-1" />
+                  <p className="text-xs font-medium">Gallery</p>
+                </div>
               </div>
             )}
             <input type="file" accept="image/*" capture="environment" ref={userPhotoUploadInputRef} onChange={handleUserPhotoSelect} className="hidden" />
+            <input type="file" accept="image/*" ref={userPhotoGalleryRef} onChange={handleUserPhotoSelect} className="hidden" />
             <p className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-50 dark:bg-neutral-800 p-2 rounded-lg">
               Photo will be reviewed by an admin before appearing on the part.
             </p>
@@ -1839,6 +2014,14 @@ export default function InventoryManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Crop Image Modal ── */}
+      <CropImageModal
+        open={!!cropSource}
+        imageDataUrl={cropSource || ""}
+        onClose={() => setCropSource(null)}
+        onCrop={handleCropConfirm}
+      />
     </div>
   );
 }

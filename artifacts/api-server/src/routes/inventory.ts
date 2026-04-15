@@ -268,22 +268,28 @@ router.post("/inventory/pending/:id/approve", async (req, res) => {
     const parts = (state.parts as any[]) ?? [];
 
     if (change.type === "location") {
-      // Apply location change
       const updatedParts = parts.map((p: any) =>
         p.id === change.partId ? { ...p, location: change.newValue, Location: change.newValue } : p
       );
       await db.update(inventoryState).set({ parts: updatedParts }).where(eq(inventoryState.id, 1));
     } else if (change.type === "photo") {
-      // Apply photo
       const photoName = req.body.approvedName || change.photoName || "photo.jpg";
+      void photoName;
       const updatedParts = parts.map((p: any) => {
-        if (p.id === change.partId) {
+        if (p.id === change.partId || p.partNumber === change.partNumber) {
           return { ...p, images: [...(p.images || []), change.photoData] };
         }
         return p;
       });
       await db.update(inventoryState).set({ parts: updatedParts }).where(eq(inventoryState.id, 1));
-      void photoName; // used by client for display
+    } else if (change.type === "add_part") {
+      try {
+        const newPartData = JSON.parse(change.newValue || "{}");
+        const newPart = { ...newPartData, id: crypto.randomUUID(), images: newPartData.images || [] };
+        await db.update(inventoryState).set({ parts: [...parts, newPart] }).where(eq(inventoryState.id, 1));
+      } catch {
+        return res.status(400).json({ message: "Invalid part data in pending change" });
+      }
     }
 
     await db.update(pendingChanges).set({ status: "approved" }).where(eq(pendingChanges.id, changeId));
