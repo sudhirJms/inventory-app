@@ -24,7 +24,7 @@ app.use(
         };
       },
     },
-  }),
+  })
 );
 
 app.use(cors());
@@ -33,11 +33,15 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use("/api", router);
 
-// Serve React frontend in production
+// ✅ Serve React frontend in production (FIXED)
 if (process.env.NODE_ENV === "production") {
   const staticDir = path.join(import.meta.dirname, "public");
+
+  // static files
   app.use(express.static(staticDir));
-  app.get("*", (_req, res) => {
+
+  // ✅ FIX: Express v5 safe fallback route
+  app.use((_req, res) => {
     res.sendFile(path.join(staticDir, "index.html"));
   });
 }
